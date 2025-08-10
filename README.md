@@ -1,7 +1,3 @@
-Ok, mình sẽ viết cho bạn một **README tổng** cho repo `data-engineering-learning` theo phong cách portfolio, vừa chuyên nghiệp để gắn vào CV, vừa dễ mở rộng khi bạn thêm project mới.
-
----
-
 # 📂 Data Engineering Learning Portfolio
 
 ## 📖 Giới thiệu
