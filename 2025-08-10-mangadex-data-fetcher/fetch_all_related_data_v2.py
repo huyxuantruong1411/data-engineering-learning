@@ -434,7 +434,7 @@ class MangaDataFetcher:
             else:
                 logger.info("[RESET] Progress says completed but no data found, resetting...")
                 self.progress['related']['completed'] = False
-            
+        
         logger.info(f"[START] Fetching related manga for {len(manga_ids)} manga...")
         
         # Find starting point
@@ -442,36 +442,61 @@ class MangaDataFetcher:
         if self.progress['related']['last_processed']:
             try:
                 start_idx = manga_ids.index(self.progress['related']['last_processed'])
-                start_idx += 1
-                logger.info(f"[RESET] Resuming related manga from index {start_idx}")
+                start_idx += 1  # Start from next item
+                logger.info(f"[RESUME] Resuming related manga from index {start_idx}")
             except ValueError:
                 start_idx = 0
+        
+        processed_count = 0
+        skipped_count = 0
+        error_count = 0
         
         for i, mid in enumerate(manga_ids[start_idx:], start_idx + 1):
             if db[COLLECTIONS['related']].count_documents({"_id": mid}) > 0:
                 continue
                 
-            data = self.request_api(f"/manga/{mid}")
-            if not data:
-                logger.warning(f"[WARN] Could not fetch manga {mid}")
-                continue
+            try:
+                data = self.request_api(f"/manga/{mid}")
+                if not data:
+                    logger.warning(f"[WARN] Could not fetch manga {mid} - skipping")
+                    skipped_count += 1
+                    continue
+                    
+                relationships = data.get("data", {}).get("relationships", [])
+                db[COLLECTIONS['related']].insert_one({
+                    "_id": mid,
+                    "relationships": relationships,
+                    "fetched_at": datetime.now().isoformat()
+                })
                 
-            relationships = data.get("data", {}).get("relationships", [])
-            db[COLLECTIONS['related']].insert_one({
-                "_id": mid,
-                "relationships": relationships,
-                "fetched_at": datetime.now().isoformat()
-            })
-            
-            logger.info(f"[{i}/{len(manga_ids)}] [SUCCESS] Related saved for {mid}")
-            
-            # Update progress
-            self.progress['related']['last_processed'] = mid
-            self.save_progress()
+                processed_count += 1
+                logger.info(f"[{i}/{len(manga_ids)}] [SUCCESS] Related saved for {mid}")
+                
+                # Update progress
+                self.progress['related']['last_processed'] = mid
+                self.save_progress()
+                
+            except Exception as e:
+                if "404" in str(e) or "HTTP 404" in str(e):
+                    logger.warning(f"[SKIP] Manga {mid} not found (404) - skipping")
+                    skipped_count += 1
+                    # Still save a record to avoid re-processing
+                    db[COLLECTIONS['related']].insert_one({
+                        "_id": mid,
+                        "relationships": [],
+                        "fetched_at": datetime.now().isoformat(),
+                        "error": "404 - Manga not found"
+                    })
+                else:
+                    logger.error(f"[ERROR] Failed to fetch manga {mid}: {e}")
+                    error_count += 1
+                    # Continue with next manga instead of stopping
+                    continue
             
             if self.delay > 0:
                 time.sleep(self.delay)
                 
+        logger.info(f"[SUMMARY] Related manga: {processed_count} processed, {skipped_count} skipped, {error_count} errors")
         self.progress['related']['completed'] = True
         self.save_progress()
         logger.info("[SUCCESS] Related manga fetching completed")
@@ -497,60 +522,82 @@ class MangaDataFetcher:
                     self.progress['creators']['completed'] = False
                 if not groups_exist:
                     self.progress['groups']['completed'] = False
-            
-        logger.info(f"[START] Fetching covers, creators, and groups for {len(manga_ids)} manga...")
         
+        logger.info(f"[START] Fetching covers, creators, and groups for {len(manga_ids)} manga...")
+    
         # Collect all unique IDs from relationships
         all_cover_ids = set()
         all_creator_ids = set()
         all_group_ids = set()
         
-        # First pass: collect all IDs from relationships
-        logger.info("[COLLECT] Collecting IDs from existing relationships...")
-        for mid in manga_ids:
-            manga_doc = db[MANGA_COLLECTION].find_one({"_id": mid}, {"relationships": 1})
-            if not manga_doc or "relationships" not in manga_doc:
-                continue
-                
-            for rel in manga_doc["relationships"]:
+        # First pass: collect IDs from relationships in the related collection
+        logger.info("[COLLECT] Collecting IDs from 'related' collection...")
+        related_docs = db[COLLECTIONS['related']].find({})
+        for doc in related_docs:
+            for rel in doc.get("relationships", []):
                 rid = rel.get("id")
                 if not rid:
                     continue
-                    
                 if rel["type"] == "cover_art":
                     all_cover_ids.add(rid)
                 elif rel["type"] in ["author", "artist"]:
                     all_creator_ids.add(rid)
                 elif rel["type"] == "scanlation_group":
                     all_group_ids.add(rid)
-        
+    
+        # Second pass: collect scanlation_group IDs from chapter relationships
+        logger.info("[COLLECT] Collecting scanlation groups from 'chapters' collection...")
+        chapter_docs = db[COLLECTIONS['chapters']].find({}, {"relationships": 1})
+        for doc in chapter_docs:
+            for rel in doc.get("relationships", []):
+                if rel.get("type") == "scanlation_group":
+                    rid = rel.get("id")
+                    if rid:
+                        all_group_ids.add(rid)
+    
         logger.info(f"[INFO] Found {len(all_cover_ids)} cover IDs, {len(all_creator_ids)} creator IDs, {len(all_group_ids)} group IDs")
-        
+    
         # Fetch cover arts
-        if not self.progress['cover_arts']['completed']:
+        if not self.progress['cover_arts']['completed'] and all_cover_ids:
             self._fetch_covers(list(all_cover_ids))
             
         # Fetch creators
-        if not self.progress['creators']['completed']:
+        if not self.progress['creators']['completed'] and all_creator_ids:
             self._fetch_creators(list(all_creator_ids))
             
         # Fetch groups
-        if not self.progress['groups']['completed']:
+        if not self.progress['groups']['completed'] and all_group_ids:
             self._fetch_groups(list(all_group_ids))
     
+
     def _fetch_covers(self, cover_ids: List[str]):
         """Fetch cover art data."""
         logger.info(f"[START] Fetching {len(cover_ids)} cover arts...")
         
+        processed_count = 0
+        skipped_count = 0
+        error_count = 0
+        
         for i, rid in enumerate(cover_ids, 1):
             if db[COLLECTIONS['cover_arts']].count_documents({"_id": rid}) > 0:
+                skipped_count += 1
                 continue
                 
-            cover = self.request_api(f"/cover/{rid}")
-            if cover:
-                cover["_id"] = rid
-                cover["fetched_at"] = datetime.now().isoformat()
-                db[COLLECTIONS['cover_arts']].insert_one(cover)
+            try:
+                cover = self.request_api(f"/cover/{rid}")
+                if cover:
+                    cover["_id"] = rid
+                    cover["fetched_at"] = datetime.now().isoformat()
+                    db[COLLECTIONS['cover_arts']].insert_one(cover)
+                    processed_count += 1
+                else:
+                    error_count += 1
+                    
+            except Exception as e:
+                logger.warning(f"[WARN] Failed to fetch cover {rid}: {e}")
+                error_count += 1
+                # Continue with next cover instead of stopping
+                continue
                 
             if i % 100 == 0:
                 logger.info(f"[PROGRESS] {i}/{len(cover_ids)} covers processed")
@@ -558,6 +605,7 @@ class MangaDataFetcher:
             if self.delay > 0:
                 time.sleep(self.delay)
                 
+        logger.info(f"[SUMMARY] Covers: {processed_count} processed, {skipped_count} skipped, {error_count} errors")
         self.progress['cover_arts']['completed'] = True
         self.save_progress()
         logger.info("[SUCCESS] Cover arts fetching completed")
@@ -566,15 +614,30 @@ class MangaDataFetcher:
         """Fetch creator data."""
         logger.info(f"[START] Fetching {len(creator_ids)} creators...")
         
+        processed_count = 0
+        skipped_count = 0
+        error_count = 0
+        
         for i, rid in enumerate(creator_ids, 1):
             if db[COLLECTIONS['creators']].count_documents({"_id": rid}) > 0:
+                skipped_count += 1
                 continue
                 
-            creator = self.request_api(f"/author/{rid}")
-            if creator:
-                creator["_id"] = rid
-                creator["fetched_at"] = datetime.now().isoformat()
-                db[COLLECTIONS['creators']].insert_one(creator)
+            try:
+                creator = self.request_api(f"/author/{rid}")
+                if creator:
+                    creator["_id"] = rid
+                    creator["fetched_at"] = datetime.now().isoformat()
+                    db[COLLECTIONS['creators']].insert_one(creator)
+                    processed_count += 1
+                else:
+                    error_count += 1
+                    
+            except Exception as e:
+                logger.warning(f"[WARN] Failed to fetch creator {rid}: {e}")
+                error_count += 1
+                # Continue with next creator instead of stopping
+                continue
                 
             if i % 100 == 0:
                 logger.info(f"[PROGRESS] {i}/{len(creator_ids)} creators processed")
@@ -582,6 +645,7 @@ class MangaDataFetcher:
             if self.delay > 0:
                 time.sleep(self.delay)
                 
+        logger.info(f"[SUMMARY] Creators: {processed_count} processed, {skipped_count} skipped, {error_count} errors")
         self.progress['creators']['completed'] = True
         self.save_progress()
         logger.info("[SUCCESS] Creators fetching completed")
@@ -590,15 +654,30 @@ class MangaDataFetcher:
         """Fetch scanlation group data."""
         logger.info(f"[START] Fetching {len(group_ids)} scanlation groups...")
         
+        processed_count = 0
+        skipped_count = 0
+        error_count = 0
+        
         for i, rid in enumerate(group_ids, 1):
             if db[COLLECTIONS['groups']].count_documents({"_id": rid}) > 0:
+                skipped_count += 1
                 continue
                 
-            group = self.request_api(f"/group/{rid}")
-            if group:
-                group["_id"] = rid
-                group["fetched_at"] = datetime.now().isoformat()
-                db[COLLECTIONS['groups']].insert_one(group)
+            try:
+                group = self.request_api(f"/group/{rid}")
+                if group:
+                    group["_id"] = rid
+                    group["fetched_at"] = datetime.now().isoformat()
+                    db[COLLECTIONS['groups']].insert_one(group)
+                    processed_count += 1
+                else:
+                    error_count += 1
+                    
+            except Exception as e:
+                logger.warning(f"[WARN] Failed to fetch group {rid}: {e}")
+                error_count += 1
+                # Continue with next group instead of stopping
+                continue
                 
             if i % 100 == 0:
                 logger.info(f"[PROGRESS] {i}/{len(group_ids)} groups processed")
@@ -606,6 +685,7 @@ class MangaDataFetcher:
             if self.delay > 0:
                 time.sleep(self.delay)
                 
+        logger.info(f"[SUMMARY] Groups: {processed_count} processed, {skipped_count} skipped, {error_count} errors")
         self.progress['groups']['completed'] = True
         self.save_progress()
         logger.info("[SUCCESS] Groups fetching completed")

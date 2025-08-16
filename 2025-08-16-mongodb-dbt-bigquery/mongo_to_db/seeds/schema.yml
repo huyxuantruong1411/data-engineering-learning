@@ -1,0 +1,49 @@
+version: 2
+seeds:
+  - name: dim_manga
+    columns:
+      - name: manga_id
+        tests: [not_null]
+      - name: title_en
+      - name: title_ja
+      - name: year
+        data_type: INT64
+      - name: status
+      - name: demographic
+      - name: content_rating
+      - name: original_language
+      - name: created_at
+      - name: updated_at
+      - name: is_locked
+      - name: last_chapter
+      - name: last_volume
+      - name: latest_uploaded_chapter
+      - name: version
+      - name: state
+      - name: chapter_numbers_reset_on_new_volume
+  - name: bridge_creator_biography
+    columns:
+      - name: creator_id
+        tests: [not_null]
+      - name: lang_code
+      - name: biography
+  - name: fact_statistics
+    columns:
+      - name: stat_id
+        tests: [not_null]
+      - name: manga_id
+      - name: snapshot_time
+      - name: fetched_at
+      - name: source
+      - name: follows
+        data_type: INT64
+      - name: rating_avg
+        data_type: FLOAT64
+      - name: rating_bayesian
+        data_type: FLOAT64
+      - name: unavailable_chapters_count
+        data_type: INT64
+      - name: comments_thread_id
+        data_type: INT64
+      - name: comments_replies_count
+        data_type: INT64

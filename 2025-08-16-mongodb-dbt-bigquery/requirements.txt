@@ -1,0 +1,5 @@
+pymongo
+pandas
+pyarrow
+dbt-bigquery
+google-cloud-bigquery

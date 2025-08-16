@@ -1,0 +1,127 @@
+[0m21:42:53.653252 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x0000020160302E40>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x0000020160E2E0D0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x00000201614AFED0>]}
+
+
+============================== 21:42:53.656429 | ee8abc4d-f7c2-44e5-8305-46e343c08603 ==============================
+[0m21:42:53.656429 [info ] [MainThread]: Running with dbt=1.10.9
+[0m21:42:53.657135 [debug] [MainThread]: running dbt with arguments {'partial_parse': 'True', 'static_parser': 'True', 'send_anonymous_usage_stats': 'True', 'warn_error': 'None', 'cache_selected_only': 'False', 'target_path': 'None', 'version_check': 'True', 'invocation_command': 'dbt init mongo_to_db', 'log_format': 'default', 'use_colors': 'True', 'introspect': 'True', 'debug': 'False', 'printer_width': '80', 'fail_fast': 'False', 'no_print': 'None', 'empty': 'None', 'log_cache_events': 'False', 'use_experimental_parser': 'False', 'quiet': 'False', 'log_path': 'logs', 'indirect_selection': 'eager', 'write_json': 'True', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'profiles_dir': 'C:\\Users\\Huy\\.dbt'}
+[0m21:42:53.670094 [debug] [MainThread]: Starter project path: D:\Projects\Học DE\data-engineering-learning\2025-08-16\env\Lib\site-packages\dbt\include\starter_project
+[0m21:42:53.683864 [info ] [MainThread]: 
+Your new dbt project "mongo_to_db" was created!
+
+For more information on how to configure the profiles.yml file,
+please consult the dbt documentation here:
+
+  https://docs.getdbt.com/docs/configure-your-profile
+
+One more thing:
+
+Need help? Don't hesitate to reach out to us via GitHub issues or on Slack:
+
+  https://community.getdbt.com/
+
+Happy modeling!
+
+[0m21:42:53.684392 [info ] [MainThread]: Setting up your profile.
+[0m21:42:53.684884 [error] [MainThread]: Encountered an error:
+'charmap' codec can't decode byte 0x8d in position 132: character maps to <undefined>
+[0m21:42:53.695797 [error] [MainThread]: Traceback (most recent call last):
+  File "D:\Projects\Học DE\data-engineering-learning\2025-08-16\env\Lib\site-packages\dbt\cli\requires.py", line 178, in wrapper
+    result, success = func(*args, **kwargs)
+                      ~~~~^^^^^^^^^^^^^^^^^
+  File "D:\Projects\Học DE\data-engineering-learning\2025-08-16\env\Lib\site-packages\dbt\cli\requires.py", line 128, in wrapper
+    return func(*args, **kwargs)
+  File "D:\Projects\Học DE\data-engineering-learning\2025-08-16\env\Lib\site-packages\dbt\cli\main.py", line 483, in init
+    results = task.run()
+  File "D:\Projects\Học DE\data-engineering-learning\2025-08-16\env\Lib\site-packages\dbt\task\init.py", line 346, in run
+    self.setup_profile(profile_name)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "D:\Projects\Học DE\data-engineering-learning\2025-08-16\env\Lib\site-packages\dbt\task\init.py", line 248, in setup_profile
+    if not self.check_if_can_write_profile(profile_name=profile_name):
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Projects\Học DE\data-engineering-learning\2025-08-16\env\Lib\site-packages\dbt\task\init.py", line 209, in check_if_can_write_profile
+    profiles = yaml.safe_load(f) or {}
+               ~~~~~~~~~~~~~~^^^
+  File "D:\Projects\Học DE\data-engineering-learning\2025-08-16\env\Lib\site-packages\yaml\__init__.py", line 125, in safe_load
+    return load(stream, SafeLoader)
+  File "D:\Projects\Học DE\data-engineering-learning\2025-08-16\env\Lib\site-packages\yaml\__init__.py", line 79, in load
+    loader = Loader(stream)
+  File "D:\Projects\Học DE\data-engineering-learning\2025-08-16\env\Lib\site-packages\yaml\loader.py", line 34, in __init__
+    Reader.__init__(self, stream)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "D:\Projects\Học DE\data-engineering-learning\2025-08-16\env\Lib\site-packages\yaml\reader.py", line 85, in __init__
+    self.determine_encoding()
+    ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "D:\Projects\Học DE\data-engineering-learning\2025-08-16\env\Lib\site-packages\yaml\reader.py", line 124, in determine_encoding
+    self.update_raw()
+    ~~~~~~~~~~~~~~~^^
+  File "D:\Projects\Học DE\data-engineering-learning\2025-08-16\env\Lib\site-packages\yaml\reader.py", line 178, in update_raw
+    data = self.stream.read(size)
+  File "C:\Users\Huy\AppData\Local\Programs\Python\Python313\Lib\encodings\cp1252.py", line 23, in decode
+    return codecs.charmap_decode(input,self.errors,decoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeDecodeError: 'charmap' codec can't decode byte 0x8d in position 132: character maps to <undefined>
+
+[0m21:42:53.696879 [debug] [MainThread]: Command `dbt init` failed at 21:42:53.696763 after 0.15 seconds
+[0m21:42:53.697133 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x000002016251A520>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x0000020162565250>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x000002016258C160>]}
+[0m21:42:53.697387 [debug] [MainThread]: Flushing usage events
+[0m21:42:55.194126 [debug] [MainThread]: An error was encountered while trying to flush usage events
+[0m21:45:32.835898 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x000002A3AC6C2E40>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x000002A3AD1EE0D0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x000002A3AD86FED0>]}
+
+
+============================== 21:45:32.839067 | 610a8b26-f2d1-4952-8f94-f0193ff82771 ==============================
+[0m21:45:32.839067 [info ] [MainThread]: Running with dbt=1.10.9
+[0m21:45:32.839566 [debug] [MainThread]: running dbt with arguments {'partial_parse': 'True', 'profiles_dir': 'C:\\Users\\Huy\\.dbt', 'send_anonymous_usage_stats': 'True', 'version_check': 'True', 'cache_selected_only': 'False', 'target_path': 'None', 'use_colors': 'True', 'invocation_command': 'dbt debug', 'log_format': 'default', 'warn_error': 'None', 'introspect': 'True', 'debug': 'False', 'printer_width': '80', 'fail_fast': 'False', 'no_print': 'None', 'quiet': 'False', 'use_experimental_parser': 'False', 'empty': 'None', 'log_cache_events': 'False', 'indirect_selection': 'eager', 'log_path': 'logs', 'write_json': 'True', 'static_parser': 'True', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])'}
+[0m21:45:32.850272 [info ] [MainThread]: dbt version: 1.10.9
+[0m21:45:32.850581 [info ] [MainThread]: python version: 3.13.2
+[0m21:45:32.850807 [info ] [MainThread]: python path: D:\Projects\Học DE\data-engineering-learning\2025-08-16\env\Scripts\python.exe
+[0m21:45:32.851048 [info ] [MainThread]: os info: Windows-11-10.0.26100-SP0
+[0m21:45:34.678317 [info ] [MainThread]: Using profiles dir at C:\Users\Huy\.dbt
+[0m21:45:34.678720 [info ] [MainThread]: Using profiles.yml file at C:\Users\Huy\.dbt\profiles.yml
+[0m21:45:34.679015 [info ] [MainThread]: Using dbt_project.yml file at D:\Projects\Học DE\data-engineering-learning\2025-08-16\dbt_project.yml
+[0m21:45:34.679273 [info ] [MainThread]: adapter type: bigquery
+[0m21:45:34.679481 [info ] [MainThread]: adapter version: 1.10.1
+[0m21:45:34.679710 [info ] [MainThread]: Configuration:
+[0m21:45:34.679900 [info ] [MainThread]:   profiles.yml file [[32mOK found and valid[0m]
+[0m21:45:34.680081 [info ] [MainThread]:   dbt_project.yml file [[31mERROR not found[0m]
+[0m21:45:34.680268 [info ] [MainThread]: Required dependencies:
+[0m21:45:34.680460 [debug] [MainThread]: Executing "git --help"
+[0m21:45:34.710186 [debug] [MainThread]: STDOUT: "b"usage: git [-v | --version] [-h | --help] [-C <path>] [-c <name>=<value>]\n           [--exec-path[=<path>]] [--html-path] [--man-path] [--info-path]\n           [-p | --paginate | -P | --no-pager] [--no-replace-objects] [--bare]\n           [--git-dir=<path>] [--work-tree=<path>] [--namespace=<name>]\n           [--config-env=<name>=<envvar>] <command> [<args>]\n\nThese are common Git commands used in various situations:\n\nstart a working area (see also: git help tutorial)\n   clone     Clone a repository into a new directory\n   init      Create an empty Git repository or reinitialize an existing one\n\nwork on the current change (see also: git help everyday)\n   add       Add file contents to the index\n   mv        Move or rename a file, a directory, or a symlink\n   restore   Restore working tree files\n   rm        Remove files from the working tree and from the index\n\nexamine the history and state (see also: git help revisions)\n   bisect    Use binary search to find the commit that introduced a bug\n   diff      Show changes between commits, commit and working tree, etc\n   grep      Print lines matching a pattern\n   log       Show commit logs\n   show      Show various types of objects\n   status    Show the working tree status\n\ngrow, mark and tweak your common history\n   branch    List, create, or delete branches\n   commit    Record changes to the repository\n   merge     Join two or more development histories together\n   rebase    Reapply commits on top of another base tip\n   reset     Reset current HEAD to the specified state\n   switch    Switch branches\n   tag       Create, list, delete or verify a tag object signed with GPG\n\ncollaborate (see also: git help workflows)\n   fetch     Download objects and refs from another repository\n   pull      Fetch from and integrate with another repository or a local branch\n   push      Update remote refs along with associated objects\n\n'git help -a' and 'git help -g' list available subcommands and some\nconcept guides. See 'git help <command>' or 'git help <concept>'\nto read about a specific subcommand or concept.\nSee 'git help git' for an overview of the system.\n""
+[0m21:45:34.710562 [debug] [MainThread]: STDERR: "b''"
+[0m21:45:34.710864 [info ] [MainThread]:  - git [[32mOK found[0m]
+
+[0m21:45:34.711249 [info ] [MainThread]: Connection:
+[0m21:45:34.711604 [info ] [MainThread]:   method: service-account
+[0m21:45:34.711929 [info ] [MainThread]:   database: manga-etl-001
+[0m21:45:34.712289 [info ] [MainThread]:   execution_project: manga-etl-001
+[0m21:45:34.712597 [info ] [MainThread]:   schema: manga_data
+[0m21:45:34.712885 [info ] [MainThread]:   location: asia-southeast1
+[0m21:45:34.713133 [info ] [MainThread]:   priority: interactive
+[0m21:45:34.713361 [info ] [MainThread]:   maximum_bytes_billed: None
+[0m21:45:34.713578 [info ] [MainThread]:   impersonate_service_account: None
+[0m21:45:34.713797 [info ] [MainThread]:   job_retry_deadline_seconds: None
+[0m21:45:34.714008 [info ] [MainThread]:   job_retries: 1
+[0m21:45:34.714210 [info ] [MainThread]:   job_creation_timeout_seconds: None
+[0m21:45:34.714407 [info ] [MainThread]:   job_execution_timeout_seconds: None
+[0m21:45:34.714597 [info ] [MainThread]:   timeout_seconds: None
+[0m21:45:34.714787 [info ] [MainThread]:   client_id: None
+[0m21:45:34.714973 [info ] [MainThread]:   token_uri: None
+[0m21:45:34.715159 [info ] [MainThread]:   compute_region: None
+[0m21:45:34.715356 [info ] [MainThread]:   dataproc_cluster_name: None
+[0m21:45:34.715621 [info ] [MainThread]:   gcs_bucket: None
+[0m21:45:34.715913 [info ] [MainThread]:   dataproc_batch: None
+[0m21:45:34.716291 [info ] [MainThread]: Registered adapter: bigquery=1.10.1
+[0m21:45:34.987661 [debug] [MainThread]: Acquiring new bigquery connection 'debug'
+[0m21:45:34.988190 [debug] [MainThread]: On debug: select 1 as id
+[0m21:45:34.988414 [debug] [MainThread]: Opening a new connection, currently in state init
+[0m21:45:37.312517 [debug] [MainThread]: BigQuery adapter: https://console.cloud.google.com/bigquery?project=manga-etl-001&j=bq:asia-southeast1:cd8f3089-fa0a-440f-976a-a72133d922e6&page=queryresults
+[0m21:45:39.726398 [info ] [MainThread]:   Connection test: [[32mOK connection ok[0m]
+
+[0m21:45:39.726947 [info ] [MainThread]: [31m1 check failed:[0m
+[0m21:45:39.727268 [info ] [MainThread]: Project loading failed for the following reason:
+ project path <D:\Projects\Học DE\data-engineering-learning\2025-08-16\dbt_project.yml> not found
+
+[0m21:45:39.727853 [debug] [MainThread]: Command `dbt debug` failed at 21:45:39.727767 after 6.98 seconds
+[0m21:45:39.728076 [debug] [MainThread]: Connection 'debug' was properly closed.
+[0m21:45:39.728324 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x000002A3E277E2C0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x000002A3E2703650>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x000002A3E279F9B0>]}
+[0m21:45:39.728578 [debug] [MainThread]: Flushing usage events
+[0m21:45:41.107286 [debug] [MainThread]: An error was encountered while trying to flush usage events

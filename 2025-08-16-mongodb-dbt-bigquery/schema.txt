@@ -1,0 +1,268 @@
+# 📚 Schema chi tiết các collection trong `manga_raw_data`
+
+## 1. `mangadex_manga`
+
+Một document tương ứng với **một manga**.
+
+```json
+{
+  "_id": "string",
+  "id": "string",             // Manga ID (UUID)
+  "type": "string",           // "manga"
+  "attributes": {
+    "title": {
+      "en": "string",
+      "ja": "string"
+    },
+    "altTitles": [
+      {"en": "string"},
+      {"ja": "string"}
+    ],
+    "description": {
+      "en": "string"
+    },
+    "originalLanguage": "string",           // ví dụ "ja"
+    "publicationDemographic": "string",     // ví dụ "shounen", "seinen"
+    "status": "string",                     // ví dụ "ongoing", "completed"
+    "contentRating": "string",              // safe, suggestive, pornographic
+    "year": 2010,                           // có thể là float 2010.0
+    "createdAt": "2024-05-17T06:40:55Z",
+    "updatedAt": "2024-05-18T12:22:10Z"
+  },
+  "relationships": [
+    { "id": "creator_id", "type": "author" },
+    { "id": "creator_id", "type": "artist" },
+    { "id": "cover_id",   "type": "cover_art" },
+    { "id": "tag_id",     "type": "tag" }
+  ]
+}
+```
+
+---
+
+## 2. `mangadex_creators`
+
+Một document ứng với **một tác giả/hoạ sĩ**.
+
+```json
+{
+  "_id": "string",
+  "data": {
+    "id": "string",        // Creator ID
+    "type": "creator",
+    "attributes": {
+      "name": "string",
+      "biography": {"en": "string"},
+      "twitter": "string|null",
+      "pixiv": "string|null",
+      "naver": "string|null",
+      "website": "string|null",
+      "youtube": "string|null",
+      "weibo": "string|null",
+      "tumblr": "string|null",
+      "nicoVideo": "string|null",
+      "booth": "string|null",
+      "fanBox": "string|null",
+      "fantia": "string|null",
+      "melonBook": "string|null",
+      "namicomi": "string|null",
+      "skeb": "string|null",
+      "createdAt": "2024-01-01T00:00:00Z",
+      "updatedAt": "2024-02-01T00:00:00Z",
+      "version": 1
+    },
+    "relationships": []
+  },
+  "fetched_at": "2025-01-01T00:00:00Z",
+  "response": "ok",
+  "result": "ok"
+}
+```
+
+---
+
+## 3. `mangadex_cover_arts`
+
+Một document ứng với **một bìa manga (cover art)**.
+
+```json
+{
+  "_id": "string",
+  "data": {
+    "id": "string",      // Cover ID
+    "type": "cover_art",
+    "attributes": {
+      "description": "string",
+      "volume": "string|null",        // ví dụ "1", hoặc null
+      "fileName": "cover.jpg",
+      "locale": "ja",
+      "createdAt": "2024-01-01T00:00:00Z",
+      "updatedAt": "2024-02-01T00:00:00Z",
+      "version": 1
+    },
+    "relationships": [
+      { "id": "manga_id", "type": "manga" }
+    ]
+  },
+  "fetched_at": "2025-01-01T00:00:00Z",
+  "response": "ok",
+  "result": "ok"
+}
+```
+
+---
+
+## 4. `mangadex_related`
+
+Một document ứng với **một manga và danh sách manga liên quan**.
+
+```json
+{
+  "_id": "manga_id",
+  "fetched_at": "2025-01-01T00:00:00Z",
+  "relationships": [
+    {
+      "id": "related_manga_id",
+      "type": "manga",
+      "related": "prequel"    // hoặc sequel, side_story, spin_off, ...
+    }
+  ]
+}
+```
+
+---
+
+## 5. `mangadex_tags`
+
+Một document ứng với **một thẻ (tag)**.
+
+```json
+{
+  "_id": "tag_id",
+  "attributes": {
+    "name": {"en": "Romance"},
+    "description": {},                // thường rỗng
+    "group": "genre",                 // ví dụ: "genre", "theme", "format"
+    "version": 1
+  }
+}
+```
+
+---
+
+## 6. `mangadex_statistics`
+
+Một document ứng với **snapshot thống kê của manga**.
+
+```json
+{
+  "_id": "string",
+  "mangaId": "manga_id",
+  "fetched_at": "2025-01-01T00:00:00Z",
+  "snapshotTime": 1736895600.0,       // epoch hoặc object {"$numberDouble": "NaN"}
+  "source": "mangadex",
+  "statistics": {
+    "follows": 12345,
+    "unavailableChaptersCount": 0,
+    "rating": {
+      "average": 8.5,
+      "bayesian": 8.2
+    },
+    "comments": {
+      "threadId": 100,
+      "repliesCount": 20
+    }
+  }
+}
+```
+
+---
+
+## 7. `mangadex_chapters`
+
+Một document ứng với **một chapter**.
+
+```json
+{
+  "_id": "string",
+  "id": "string",            // Chapter ID
+  "type": "chapter",
+  "mangaId": "manga_id",     // có thể không có, lấy trong relationships
+  "attributes": {
+    "volume": "1",
+    "chapter": "5",
+    "title": "Chapter title",
+    "translatedLanguage": "en",
+    "publishAt": "2024-01-01T00:00:00Z",
+    "readableAt": "2024-01-01T00:00:00Z",
+    "createdAt": "2024-01-01T00:00:00Z",
+    "updatedAt": "2024-02-01T00:00:00Z",
+    "pages": 20,
+    "version": 1
+  },
+  "relationships": [
+    { "id": "manga_id", "type": "manga" },
+    { "id": "group_id", "type": "scanlation_group" }
+  ]
+}
+```
+
+---
+
+## 8. `mangadex_groups`
+
+Một document ứng với **một nhóm dịch (scanlation group)**.
+
+```json
+{
+  "_id": "string",
+  "data": {
+    "id": "string",        // Group ID
+    "type": "scanlation_group",
+    "attributes": {
+      "name": "Group Name",
+      "altNames": [ {"en": "Alias1"}, {"en": "Alias2"} ],
+      "focusedLanguages": ["en", "vi"],
+      "official": false,
+      "verified": true,
+      "inactive": false,
+      "website": "https://...",
+      "ircServer": "string",
+      "ircChannel": "string",
+      "discord": "discord.gg/xxx",
+      "contactEmail": "mail@example.com",
+      "description": "string",
+      "createdAt": "2024-01-01T00:00:00Z",
+      "updatedAt": "2024-02-01T00:00:00Z",
+      "version": 1
+    }
+  },
+  "fetched_at": "2025-01-01T00:00:00Z",
+  "response": "ok",
+  "result": "ok"
+}
+```
+
+---
+
+# 🗂️ Tổng quan quan hệ giữa các collection
+
+* **mangadex\_manga**
+
+  * quan hệ `author` / `artist` → `mangadex_creators`
+  * quan hệ `cover_art` → `mangadex_cover_arts`
+  * quan hệ `tag` → `mangadex_tags`
+  * quan hệ `manga` trong `mangadex_related`
+
+* **mangadex\_chapters**
+
+  * quan hệ `manga` → `mangadex_manga`
+  * quan hệ `scanlation_group` → `mangadex_groups`
+
+* **mangadex\_statistics**
+
+  * quan hệ `mangaId` → `mangadex_manga`
+
+---
+
+👉 Như vậy `manga_raw_data` là **database gốc dạng document JSON** với 8 collection chính, mình đã chuẩn hoá lại thành các bảng “dimension” (manga, tags, creators, groups, cover arts) + “bridge” (manga\_tag, manga\_creator, chapter\_group, related) + “fact” (statistics, chapters).
