@@ -1,0 +1,4535 @@
+=== Project Tree ===
+D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites/
+├── .vscode/
+├── clear_collections.py
+├── debug_animeplanet_enhanced.py
+├── dump.py
+├── run_conservative.py
+├── run_production_mal.py
+├── spiders/
+│   ├── animeplanet_spider.py
+│   ├── drop_collections.py
+│   ├── mal_manga_spider.py
+│   ├── mal_spider.py
+│   ├── mangaupdates_spider.py
+│   ├── review_spider.py
+│   └── settings.py
+├── src/
+│   ├── common/
+│   │   ├── anti_blocking.py
+│   │   ├── config.py
+│   │   ├── db.py
+│   │   ├── http.py
+│   │   ├── io.py
+│   │   └── util.py
+│   ├── config.py
+│   ├── db.py
+│   ├── enrich_links.py
+│   ├── extractors/
+│   │   ├── anilist.py
+│   │   ├── anilist_fetcher.py
+│   │   ├── animeplanet.py
+│   │   ├── animeplanet_fetcher.py
+│   │   ├── animeplanet_fetcher_enhanced.py
+│   │   ├── mal.py
+│   │   ├── mal_fetcher.py
+│   │   ├── mangaupdates.py
+│   │   └── mangaupdates_fetcher.py
+│   ├── http_client.py
+│   ├── pipeline.py
+│   ├── pipeline_conservative.py
+│   ├── run.py
+│   ├── scrapy_runner.py
+│   └── utils.py
+├── test.py
+├── test_mal_parallel.py
+├── test_mal_performance.py
+├── test_mongodb.py
+├── tmp/
+│   ├── mal_data/
+│   └── mal_manga_data/
+└── verify_mal_optimizations.py
+
+
+=== Folder: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites ===
+
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\clear_collections.py ---
+from pymongo import MongoClient
+
+def clear_test_collections():
+    client = MongoClient("mongodb://localhost:27017")
+    db = client["manga_raw_data"]
+
+    collections = [
+        "anilist_data",
+        "mal_data",
+        "mangaupdates_data",
+        "animeplanet_data",
+    ]
+
+    for col in collections:
+        if col in db.list_collection_names():
+            db[col].drop()
+            print(f"✅ Dropped collection: {col}")
+        else:
+            print(f"⚠️ Collection not found, skipped: {col}")
+
+    client.close()
+
+
+if __name__ == "__main__":
+    clear_test_collections()
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\debug_animeplanet_enhanced.py ---
+# debug_animeplanet_enhanced.py
+# Script để test trực tiếp anime-planet fetcher
+
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+import logging
+from pprint import pprint
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+def test_single_manga(slug):
+    """Test một manga cụ thể"""
+    print(f"\n{'='*60}")
+    print(f"🧪 Testing anime-planet slug: {slug}")
+    print(f"{'='*60}")
+    
+    # Import the enhanced fetcher
+    from src.extractors.animeplanet_fetcher_enhanced import get_full_data
+    
+    try:
+        result = get_full_data(slug)
+        
+        print(f"\n📊 RESULTS for {slug}:")
+        print(f"Status: {result.get('status')}")
+        print(f"HTTP: {result.get('http')}")
+        
+        # Main info
+        main = result.get('main', {})
+        print(f"\n📖 Main Info:")
+        print(f"  Title: {main.get('title', 'N/A')}")
+        print(f"  Synopsis: {len(main.get('synopsis', ''))} chars")
+        print(f"  Rating: {main.get('rating', 'N/A')}")
+        
+        # Reviews
+        reviews = result.get('reviews', [])
+        print(f"\n📝 Reviews: {len(reviews)} found")
+        for i, review in enumerate(reviews[:3]):  # Show first 3
+            print(f"  Review {i+1}:")
+            print(f"    User: {review.get('user', 'Anonymous')}")
+            print(f"    Text: {review.get('text', '')[:100]}...")
+        
+        # Recommendations  
+        recs = result.get('recommendations', [])
+        print(f"\n🔗 Recommendations: {len(recs)} found")
+        for i, rec in enumerate(recs[:5]):  # Show first 5
+            print(f"  Rec {i+1}: {rec.get('slug')} - {rec.get('title', 'No title')}")
+        
+        return result
+        
+    except Exception as e:
+        print(f"❌ Error testing {slug}: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def test_multiple_slugs():
+    """Test multiple popular manga slugs"""
+    test_slugs = [
+        "naruto",           # Very popular, should have reviews
+        "one-piece",        # Extremely popular  
+        "attack-on-titan",  # Popular, should have data
+        "tower-of-god",     # Webtoon, moderate popularity
+        "berserk"           # Classic, should have reviews
+    ]
+    
+    results = {}
+    
+    for slug in test_slugs:
+        result = test_single_manga(slug)
+        if result:
+            results[slug] = {
+                'status': result.get('status'),
+                'reviews_count': len(result.get('reviews', [])),
+                'recs_count': len(result.get('recommendations', [])),
+                'has_main': bool(result.get('main', {}))
+            }
+        
+        print(f"\n⏳ Waiting before next test...")
+        import time
+        time.sleep(15)  # Wait between tests
+    
+    print(f"\n{'='*60}")
+    print("📈 SUMMARY OF ALL TESTS")
+    print(f"{'='*60}")
+    
+    for slug, data in results.items():
+        print(f"{slug:20} | Status: {data['status']:12} | Reviews: {data['reviews_count']:3} | Recs: {data['recs_count']:3} | Main: {data['has_main']}")
+
+def test_direct_requests():
+    """Test direct HTTP requests để xem có bị block không"""
+    import requests
+    import random
+    
+    USER_AGENTS = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ]
+    
+    test_urls = [
+        "https://www.anime-planet.com/manga/naruto",
+        "https://www.anime-planet.com/manga/naruto/reviews",
+        "https://www.anime-planet.com/manga/naruto/recommendations"
+    ]
+    
+    print(f"\n{'='*60}")
+    print("🔍 TESTING DIRECT HTTP REQUESTS")
+    print(f"{'='*60}")
+    
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': random.choice(USER_AGENTS),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
+    })
+    
+    for url in test_urls:
+        try:
+            print(f"\n🌐 Testing: {url}")
+            resp = session.get(url, timeout=30)
+            
+            print(f"  Status: {resp.status_code}")
+            print(f"  Content-Length: {len(resp.text)}")
+            print(f"  Title in HTML: {'<title>' in resp.text}")
+            
+            # Check for common blocking indicators
+            blocked_indicators = [
+                "access denied", "blocked", "captcha", "cloudflare", 
+                "please enable javascript", "rate limited"
+            ]
+            
+            content_lower = resp.text.lower()
+            blocked = any(indicator in content_lower for indicator in blocked_indicators)
+            
+            if blocked:
+                print(f"  ⚠️ Possible blocking detected")
+            else:
+                print(f"  ✅ Looks normal")
+                
+            # Show first 500 chars
+            print(f"  Preview: {resp.text[:500]}...")
+            
+        except Exception as e:
+            print(f"  ❌ Error: {e}")
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        # Test specific slug
+        slug = sys.argv[1]
+        test_single_manga(slug)
+    else:
+        print("🚀 Starting comprehensive Anime-Planet debug session")
+        
+        # 1. Test direct requests first
+        test_direct_requests()
+        
+        # 2. Test with enhanced fetcher
+        print(f"\n⏳ Waiting 30 seconds before enhanced tests...")
+        import time
+        time.sleep(30)
+        
+        test_multiple_slugs()
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\dump.py ---
+import os
+
+OUTPUT_FILE = "project_dump.txt"
+
+def should_ignore_file(filename: str) -> bool:
+    """Bỏ qua file không cần thiết"""
+    if filename.startswith(".env"):  # Bỏ qua mọi file .env*
+        return True
+    if filename.endswith(".exe"):
+        return True
+    if filename == "__init__.py":
+        return True
+    return False
+
+def should_ignore_dir(dirname: str) -> bool:
+    """Bỏ qua thư mục không quan trọng"""
+    if dirname.startswith(".env"):  # Bỏ qua mọi folder .env*
+        return True
+    if dirname in ("__pycache__", ".venv", "build", "dist"):
+        return True
+    return False
+
+def build_tree(root_dir: str, prefix: str = "") -> str:
+    """Tạo cây thư mục giống lệnh `tree` (lọc theo quy tắc ignore)."""
+    entries = []
+    with os.scandir(root_dir) as it:
+        for entry in sorted(it, key=lambda e: e.name):
+            if entry.is_dir() and not should_ignore_dir(entry.name):
+                entries.append(entry)
+            elif entry.is_file():
+                if should_ignore_file(entry.name):
+                    continue
+                if entry.name.endswith(".py"):
+                    entries.append(entry)
+
+    lines = []
+    for i, entry in enumerate(entries):
+        connector = "└── " if i == len(entries) - 1 else "├── "
+        if entry.is_dir():
+            lines.append(prefix + connector + entry.name + "/")
+            extension = "    " if i == len(entries) - 1 else "│   "
+            lines.extend(build_tree(entry.path, prefix + extension).splitlines())
+        else:
+            lines.append(prefix + connector + entry.name)
+    return "\n".join(lines)
+
+def dump_project(root_dir: str, output_file: str):
+    with open(output_file, "w", encoding="utf-8") as out:
+        # In cấu trúc thư mục
+        out.write("=== Project Tree ===\n")
+        out.write(root_dir + "/\n")
+        out.write(build_tree(root_dir))
+        out.write("\n\n")
+
+        # In nội dung code
+        for dirpath, dirnames, filenames in os.walk(root_dir):
+            # Lọc thư mục
+            dirnames[:] = [d for d in dirnames if not should_ignore_dir(d)]
+
+            rel_path = os.path.relpath(dirpath, root_dir)
+            if rel_path == ".":
+                rel_path = ""
+            out.write(f"\n=== Folder: {rel_path or root_dir} ===\n")
+
+            for filename in filenames:
+                if should_ignore_file(filename):
+                    continue
+                if filename.endswith(".py"):
+                    file_path = os.path.join(dirpath, filename)
+                    out.write(f"\n--- File: {file_path} ---\n")
+                    try:
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            out.write(f.read())
+                    except Exception as e:
+                        out.write(f"[Lỗi đọc file: {e}]\n")
+
+if __name__ == "__main__":
+    current_dir = os.getcwd()
+    dump_project(current_dir, OUTPUT_FILE)
+    print(f"✅ Đã xuất toàn bộ code .py (đã lọc .env*, .exe, __pycache__, __init__.py...) + cây thư mục vào {OUTPUT_FILE}")
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\run_conservative.py ---
+# run_conservative.py
+"""
+Runner script for conservative pipeline - designed for anime-planet success
+"""
+import argparse
+import logging
+import sys
+import os
+
+# Add src to path
+sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+
+from src.pipeline_conservative import run_conservative_pipeline
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Conservative manga data fetcher - better for anime-planet"
+    )
+    parser.add_argument("--limit", type=int, default=5, 
+                       help="Number of documents to process (default: 5)")
+    parser.add_argument("--skip", type=int, default=0, 
+                       help="Number of documents to skip")
+    parser.add_argument("--only", nargs="*", 
+                       choices=["mal", "anilist", "mangaupdates", "animeplanet"],
+                       help="Only run for specific sources")
+    parser.add_argument("--animeplanet-only", action="store_true",
+                       help="Only run anime-planet (shortcut)")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                       help="Enable verbose logging")
+    
+    args = parser.parse_args()
+    
+    # Setup logging
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler('manga_fetch_conservative.log')
+        ]
+    )
+    
+    logger = logging.getLogger(__name__)
+    
+    # Determine sources to run
+    if args.animeplanet_only:
+        only_sources = ["animeplanet"]
+    else:
+        only_sources = args.only
+    
+    logger.info(f"🚀 Starting conservative pipeline")
+    logger.info(f"📋 Settings: limit={args.limit}, skip={args.skip}, only={only_sources}")
+    
+    if only_sources and "animeplanet" in only_sources:
+        logger.warning("⚠️ Running anime-planet - this will be SLOW but more reliable")
+        logger.warning("⚠️ Expected time: ~30-60 seconds per manga")
+    
+    try:
+        results = run_conservative_pipeline(
+            limit=args.limit, 
+            skip=args.skip, 
+            only=only_sources
+        )
+        
+        print(f"\n{'='*80}")
+        print("📊 CONSERVATIVE PIPELINE RESULTS")  
+        print(f"{'='*80}")
+        
+        # Group results by source
+        by_source = {}
+        for result in results:
+            source = result.get("source", "unknown")
+            if source not in by_source:
+                by_source[source] = []
+            by_source[source].append(result)
+        
+        # Print summary by source
+        for source, source_results in by_source.items():
+            print(f"\n🔹 {source.upper()}:")
+            
+            success_count = 0
+            total_reviews = 0
+            total_recs = 0
+            
+            for result in source_results:
+                _id = result.get("_id", "unknown")
+                status = result.get("status", "unknown")
+                reviews = len(result.get("reviews", []))
+                recs = len(result.get("recommendations", []))
+                
+                # Success if we got any data
+                if status in ["ok", "no_reviews"] or reviews > 0 or recs > 0:
+                    success_count += 1
+                    
+                total_reviews += reviews
+                total_recs += recs
+                
+                # Status emoji
+                if status == "ok":
+                    emoji = "✅" 
+                elif status == "no_reviews":
+                    emoji = "⚠️"
+                elif status == "error":
+                    emoji = "❌"
+                else:
+                    emoji = "❓"
+                    
+                print(f"  {emoji} {_id:25} | R:{reviews:3} | Rec:{recs:3} | {status}")
+            
+            success_rate = (success_count / len(source_results)) * 100 if source_results else 0
+            print(f"  📈 Success: {success_count}/{len(source_results)} ({success_rate:.1f}%)")
+            print(f"  📊 Total: {total_reviews} reviews, {total_recs} recommendations")
+        
+        print(f"\n🎉 Total results: {len(results)}")
+        
+        # Special anime-planet analysis
+        ap_results = by_source.get("animeplanet", [])
+        if ap_results:
+            print(f"\n{'='*40}")
+            print("🎯 ANIME-PLANET DETAILED ANALYSIS")
+            print(f"{'='*40}")
+            
+            working_count = 0
+            for result in ap_results:
+                reviews = len(result.get("reviews", []))
+                recs = len(result.get("recommendations", []))
+                main = result.get("main", {})
+                has_main = bool(main.get("title") or main.get("synopsis"))
+                
+                if reviews > 0 or recs > 0 or has_main:
+                    working_count += 1
+                    
+                print(f"  {result.get('source_id', 'unknown'):20} | "
+                      f"Reviews:{reviews:3} | Recs:{recs:3} | "
+                      f"Main:{has_main} | Method:{result.get('method', 'unknown')}")
+            
+            print(f"\n  🎯 Anime-Planet working rate: {working_count}/{len(ap_results)} "
+                  f"({(working_count/len(ap_results)*100):.1f}%)")
+    
+    except KeyboardInterrupt:
+        logger.info("❌ Pipeline interrupted by user")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"❌ Pipeline failed: {e}", exc_info=True)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\run_production_mal.py ---
+#!/usr/bin/env python3
+"""
+Production MAL data collection script
+Collects all manga data from MyAnimeList using parallel processing
+"""
+import logging
+import time
+from pymongo import MongoClient
+from src.extractors.mal import collect_mal_batch
+from concurrent.futures import ThreadPoolExecutor
+import sys
+
+# Production logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('mal_production.log', encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# MongoDB connection
+MONGO_URI = "mongodb://localhost:27017"
+DB_NAME = "manga_raw_data"
+
+def get_mal_id_range():
+    """Generate MAL manga ID range for production collection"""
+    # MAL manga IDs typically range from 1 to ~150,000+
+    # Start with confirmed range and expand as needed
+    start_id = 1
+    end_id = 150000  # Adjust based on current MAL database size
+    
+    return list(range(start_id, end_id + 1))
+
+def get_existing_mal_ids():
+    """Get already collected MAL IDs to avoid duplicates"""
+    client = MongoClient(MONGO_URI)
+    db = client[DB_NAME]
+    collection = db["mal_data"]
+    
+    existing_ids = set()
+    cursor = collection.find({}, {"source_id": 1})
+    for doc in cursor:
+        existing_ids.add(doc.get("source_id"))
+    
+    client.close()
+    logger.info(f"Found {len(existing_ids)} existing MAL entries")
+    return existing_ids
+
+def save_mal_results(results):
+    """Save results to MongoDB"""
+    if not results:
+        return
+    
+    client = MongoClient(MONGO_URI)
+    db = client[DB_NAME]
+    collection = db["mal_data"]
+    
+    saved_count = 0
+    for result in results:
+        try:
+            collection.update_one(
+                {"_id": result["_id"]},
+                {"$set": result},
+                upsert=True
+            )
+            saved_count += 1
+        except Exception as e:
+            logger.error(f"Error saving {result.get('_id', 'unknown')}: {e}")
+    
+    client.close()
+    logger.info(f"Saved {saved_count}/{len(results)} results to database")
+
+def run_production_collection():
+    """Run full production MAL collection"""
+    logger.info("🚀 Starting PRODUCTION MAL collection")
+    logger.info("Target: Complete MyAnimeList manga database")
+    
+    # Get full ID range
+    all_mal_ids = get_mal_id_range()
+    logger.info(f"Total MAL ID range: {len(all_mal_ids)} manga")
+    
+    # Filter out existing IDs
+    existing_ids = get_existing_mal_ids()
+    remaining_ids = [str(mid) for mid in all_mal_ids if str(mid) not in existing_ids]
+    
+    logger.info(f"Remaining to collect: {len(remaining_ids)} manga")
+    logger.info(f"Estimated time: {len(remaining_ids) * 4 / 3600:.1f} hours with parallel processing")
+    
+    if not remaining_ids:
+        logger.info("✅ All MAL manga already collected!")
+        return
+    
+    # Process in large batches for efficiency
+    batch_size = 100  # Process 100 manga at a time
+    total_batches = len(remaining_ids) // batch_size + (1 if len(remaining_ids) % batch_size else 0)
+    
+    start_time = time.time()
+    total_processed = 0
+    
+    for i in range(0, len(remaining_ids), batch_size):
+        batch_ids = remaining_ids[i:i+batch_size]
+        batch_num = i // batch_size + 1
+        
+        logger.info(f"📦 Processing batch {batch_num}/{total_batches}: {len(batch_ids)} manga")
+        
+        try:
+            # Use batch collection with parallel processing
+            batch_results = collect_mal_batch(batch_ids, batch_size=20)
+            
+            # Save results immediately
+            save_mal_results(batch_results)
+            
+            total_processed += len(batch_results)
+            elapsed = time.time() - start_time
+            rate = total_processed / elapsed if elapsed > 0 else 0
+            
+            # Progress report
+            logger.info(f"✅ Batch {batch_num} completed")
+            logger.info(f"📊 Progress: {total_processed}/{len(remaining_ids)} ({total_processed/len(remaining_ids)*100:.1f}%)")
+            logger.info(f"⚡ Rate: {rate:.1f} manga/second")
+            logger.info(f"⏱️ ETA: {(len(remaining_ids) - total_processed) / rate / 3600:.1f} hours")
+            
+        except Exception as e:
+            logger.error(f"❌ Batch {batch_num} failed: {e}")
+            continue
+        
+        # Brief pause between batches
+        time.sleep(2)
+    
+    total_time = time.time() - start_time
+    logger.info(f"🎉 Production collection completed!")
+    logger.info(f"📊 Total processed: {total_processed} manga")
+    logger.info(f"⏱️ Total time: {total_time/3600:.1f} hours")
+    logger.info(f"⚡ Average rate: {total_processed/total_time:.1f} manga/second")
+
+if __name__ == "__main__":
+    try:
+        run_production_collection()
+    except KeyboardInterrupt:
+        logger.info("🛑 Collection stopped by user")
+    except Exception as e:
+        logger.error(f"💥 Production collection failed: {e}", exc_info=True)
+
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\test.py ---
+import requests
+
+url = "https://www.anime-planet.com/manga/tower-of-god/recommendations"
+
+response = requests.get(url)
+html = response.text
+
+with open("recommendations.html", "w", encoding="utf-8") as f:
+    f.write(html)
+
+print("Saved recommendations.html (length:", len(html), ")")
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\test_mal_parallel.py ---
+#!/usr/bin/env python3
+"""
+Test script for multi-threaded MAL fetcher performance
+Target: 87k manga in 24 hours
+"""
+import time
+import logging
+from src.extractors.mal_fetcher import get_full_data_parallel, get_batch_data
+from src.extractors.mal import collect_mal_parallel, collect_mal_batch
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def test_parallel_performance():
+    """Test parallel MAL fetcher with known manga IDs"""
+    # Test IDs - known valid MAL manga
+    test_ids = ["1", "2", "11", "1706", "23390", "74", "988", "3438", "7519", "15578"]
+    
+    print("=== MAL PARALLEL PERFORMANCE TEST ===")
+    print(f"Testing {len(test_ids)} manga with multi-threading")
+    
+    # Test 1: Parallel processing
+    print("\n🔄 Test 1: Parallel Processing (4 workers)")
+    start_time = time.time()
+    
+    try:
+        results = get_full_data_parallel(test_ids, max_workers=4)
+        parallel_time = time.time() - start_time
+        
+        print(f"✅ Parallel fetch completed in {parallel_time:.2f}s")
+        print(f"📊 Average time per manga: {parallel_time/len(test_ids):.2f}s")
+        print(f"🎯 Projected 24h capacity: {(24*3600)/(parallel_time/len(test_ids)):.0f} manga")
+        
+        # Analyze results
+        success_count = 0
+        total_reviews = 0
+        total_recs = 0
+        
+        for result in results:
+            if result.get("status") == "ok":
+                success_count += 1
+            total_reviews += len(result.get("reviews", []))
+            total_recs += len(result.get("recommendations", []))
+        
+        print(f"📈 Success rate: {success_count}/{len(results)} ({success_count/len(results)*100:.1f}%)")
+        print(f"📊 Total data: {total_reviews} reviews, {total_recs} recommendations")
+        
+    except Exception as e:
+        print(f"❌ Parallel test failed: {e}")
+    
+    # Test 2: Batch processing
+    print("\n🔄 Test 2: Batch Processing (5 manga per batch)")
+    start_time = time.time()
+    
+    try:
+        batch_results = get_batch_data(test_ids, batch_size=5)
+        batch_time = time.time() - start_time
+        
+        print(f"✅ Batch fetch completed in {batch_time:.2f}s")
+        print(f"📊 Average time per manga: {batch_time/len(test_ids):.2f}s")
+        print(f"🎯 Projected 24h capacity: {(24*3600)/(batch_time/len(test_ids)):.0f} manga")
+        
+    except Exception as e:
+        print(f"❌ Batch test failed: {e}")
+    
+    # Performance comparison
+    print(f"\n=== PERFORMANCE ANALYSIS ===")
+    if 'parallel_time' in locals() and 'batch_time' in locals():
+        print(f"Parallel processing: {parallel_time:.2f}s")
+        print(f"Batch processing: {batch_time:.2f}s")
+        
+        if parallel_time < batch_time:
+            improvement = ((batch_time - parallel_time) / batch_time) * 100
+            print(f"🚀 Parallel is {improvement:.1f}% faster")
+        
+        # 24h projection
+        parallel_capacity = (24*3600) / (parallel_time/len(test_ids))
+        batch_capacity = (24*3600) / (batch_time/len(test_ids))
+        
+        print(f"\n🎯 24-HOUR PROJECTIONS:")
+        print(f"Parallel method: {parallel_capacity:.0f} manga")
+        print(f"Batch method: {batch_capacity:.0f} manga")
+        print(f"Target: 87,000 manga")
+        
+        if parallel_capacity >= 87000:
+            print("✅ PARALLEL METHOD CAN ACHIEVE 24H TARGET!")
+        elif batch_capacity >= 87000:
+            print("✅ BATCH METHOD CAN ACHIEVE 24H TARGET!")
+        else:
+            print("⚠️ Need further optimization for 24h target")
+
+def test_anti_blocking():
+    """Test anti-blocking measures"""
+    print("\n=== ANTI-BLOCKING TEST ===")
+    
+    # Test with rapid requests
+    test_ids = ["1", "2", "11"]
+    
+    print("Testing thread-safe rate limiting...")
+    start_time = time.time()
+    
+    try:
+        results = get_full_data_parallel(test_ids, max_workers=2)
+        elapsed = time.time() - start_time
+        
+        print(f"✅ Anti-blocking test passed")
+        print(f"⏱️ Time with rate limiting: {elapsed:.2f}s")
+        print(f"📊 Average delay per request: {elapsed/len(test_ids):.2f}s")
+        
+        # Check if delays are appropriate (should be ~4s per manga)
+        expected_min_time = len(test_ids) * 2  # Minimum expected time
+        if elapsed >= expected_min_time:
+            print("✅ Rate limiting working correctly")
+        else:
+            print("⚠️ Rate limiting may be too aggressive")
+            
+    except Exception as e:
+        print(f"❌ Anti-blocking test failed: {e}")
+
+if __name__ == "__main__":
+    test_parallel_performance()
+    test_anti_blocking()
+    
+    print(f"\n{'='*50}")
+    print("🎉 MAL PARALLEL TESTING COMPLETED")
+    print("Ready for 87k manga collection in 24 hours!")
+    print(f"{'='*50}")
+
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\test_mal_performance.py ---
+#!/usr/bin/env python3
+"""
+Test script to verify MAL fetcher performance and data completeness
+"""
+import time
+from src.extractors.mal_fetcher import MALFetcher
+
+def test_mal_performance():
+    """Test MAL fetcher with a known manga ID"""
+    fetcher = MALFetcher()
+    
+    # Test with Monster (MAL ID: 1) - known to have many reviews
+    test_id = "1"
+    print(f"Testing MAL fetcher with ID: {test_id}")
+    
+    start_time = time.time()
+    result = fetcher.fetch_manga_data(test_id)
+    end_time = time.time()
+    
+    fetch_time = end_time - start_time
+    
+    print(f"\n=== MAL Fetcher Performance Test ===")
+    print(f"Fetch time: {fetch_time:.2f} seconds")
+    print(f"Data keys collected: {list(result.keys())}")
+    
+    # Check reviews
+    reviews = result.get('reviews', [])
+    print(f"Reviews collected: {len(reviews)}")
+    if reviews:
+        print(f"First review preview: {reviews[0].get('text', '')[:100]}...")
+    
+    # Check recommendations
+    recommendations = result.get('recommendations', [])
+    print(f"Recommendations collected: {len(recommendations)}")
+    
+    # Check main manga info
+    manga_info = result.get('manga_info', {})
+    print(f"Main info fields: {len(manga_info)} fields")
+    print(f"Title: {manga_info.get('title', 'N/A')}")
+    print(f"Score: {manga_info.get('score', 'N/A')}")
+    
+    return result
+
+if __name__ == "__main__":
+    test_mal_performance()
+
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\test_mongodb.py ---
+#!/usr/bin/env python3
+"""
+Quick test script to verify MongoDB connection and data insertion
+"""
+import logging
+from pymongo import MongoClient
+from datetime import datetime
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# MongoDB connection
+MONGO_URI = "mongodb://localhost:27017"
+DB_NAME = "manga_raw_data"
+
+def test_mongodb_connection():
+    """Test MongoDB connection and create test collection"""
+    try:
+        # Connect to MongoDB
+        client = MongoClient(MONGO_URI)
+        db = client[DB_NAME]
+        
+        # Test connection
+        client.admin.command('ping')
+        logger.info("✅ MongoDB connection successful")
+        
+        # List existing collections
+        collections = db.list_collection_names()
+        logger.info(f"📋 Existing collections: {collections}")
+        
+        # Create test collection with sample data
+        test_collection = db["test_mal_data"]
+        
+        # Insert test document
+        test_doc = {
+            "_id": "mal_test_123",
+            "source": "mal",
+            "source_id": "123",
+            "source_url": "https://myanimelist.net/manga/123",
+            "fetched_at": datetime.utcnow(),
+            "manga_info": {
+                "title": "Test Manga",
+                "score": 8.5,
+                "status": "Completed"
+            },
+            "reviews": [
+                {
+                    "author": "TestUser",
+                    "rating": 9,
+                    "text": "Great manga!"
+                }
+            ],
+            "recommendations": [
+                {
+                    "title": "Similar Manga",
+                    "mal_id": "456"
+                }
+            ],
+            "status": "ok",
+            "http": {"code": 200}
+        }
+        
+        # Insert or update
+        result = test_collection.replace_one(
+            {"_id": test_doc["_id"]}, 
+            test_doc, 
+            upsert=True
+        )
+        
+        if result.upserted_id:
+            logger.info(f"✅ Inserted new test document: {result.upserted_id}")
+        else:
+            logger.info(f"✅ Updated existing test document")
+        
+        # Verify insertion
+        count = test_collection.count_documents({})
+        logger.info(f"📊 Test collection now has {count} documents")
+        
+        # List collections again
+        collections_after = db.list_collection_names()
+        logger.info(f"📋 Collections after test: {collections_after}")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ MongoDB test failed: {e}")
+        return False
+
+if __name__ == "__main__":
+    print("🧪 Testing MongoDB Connection and Data Insertion")
+    print("=" * 60)
+    
+    success = test_mongodb_connection()
+    
+    if success:
+        print("\n✅ MongoDB test completed successfully!")
+        print("You should now see 'test_mal_data' collection in your database.")
+    else:
+        print("\n❌ MongoDB test failed!")
+        print("Check if MongoDB is running and connection settings are correct.")
+
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\verify_mal_optimizations.py ---
+#!/usr/bin/env python3
+"""
+Verify MAL fetcher optimizations and performance improvements
+"""
+import time
+import logging
+from src.extractors.mal_fetcher import MALFetcher
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def test_mal_optimization():
+    """Test MAL fetcher with known manga IDs to verify optimizations"""
+    fetcher = MALFetcher()
+    
+    # Test with multiple known manga IDs
+    test_cases = [
+        ("1", "Monster"),  # Known to have many reviews
+        ("2", "Berserk"),  # Popular manga with reviews
+    ]
+    
+    total_start = time.time()
+    results = []
+    
+    for mal_id, title in test_cases:
+        print(f"\n=== Testing {title} (ID: {mal_id}) ===")
+        
+        start_time = time.time()
+        try:
+            result = fetcher.fetch_manga_data(mal_id)
+            fetch_time = time.time() - start_time
+            
+            # Analyze results
+            reviews = result.get('reviews', [])
+            recommendations = result.get('recommendations', [])
+            manga_info = result.get('manga_info', {})
+            
+            test_result = {
+                'id': mal_id,
+                'title': title,
+                'fetch_time': fetch_time,
+                'reviews_count': len(reviews),
+                'recommendations_count': len(recommendations),
+                'data_sections': len(result),
+                'success': True
+            }
+            
+            print(f"✓ Fetch time: {fetch_time:.2f}s")
+            print(f"✓ Reviews collected: {len(reviews)}")
+            print(f"✓ Recommendations: {len(recommendations)}")
+            print(f"✓ Data sections: {len(result)}")
+            
+            if reviews:
+                print(f"✓ Sample review: {reviews[0].get('text', '')[:80]}...")
+            
+            results.append(test_result)
+            
+        except Exception as e:
+            print(f"✗ Error: {e}")
+            results.append({
+                'id': mal_id,
+                'title': title,
+                'fetch_time': 0,
+                'reviews_count': 0,
+                'recommendations_count': 0,
+                'data_sections': 0,
+                'success': False,
+                'error': str(e)
+            })
+    
+    total_time = time.time() - total_start
+    
+    # Summary
+    print(f"\n=== Performance Summary ===")
+    print(f"Total test time: {total_time:.2f}s")
+    print(f"Average time per manga: {total_time/len(test_cases):.2f}s")
+    
+    successful_tests = [r for r in results if r['success']]
+    if successful_tests:
+        avg_reviews = sum(r['reviews_count'] for r in successful_tests) / len(successful_tests)
+        avg_recommendations = sum(r['recommendations_count'] for r in successful_tests) / len(successful_tests)
+        print(f"Average reviews per manga: {avg_reviews:.1f}")
+        print(f"Average recommendations per manga: {avg_recommendations:.1f}")
+    
+    # Check if optimizations are working
+    print(f"\n=== Optimization Check ===")
+    for result in results:
+        if result['success']:
+            if result['reviews_count'] > 3:
+                print(f"✓ {result['title']}: Review collection improved (>{result['reviews_count']} reviews)")
+            else:
+                print(f"⚠ {result['title']}: Limited reviews ({result['reviews_count']})")
+            
+            if result['fetch_time'] < 10:
+                print(f"✓ {result['title']}: Good performance ({result['fetch_time']:.2f}s)")
+            else:
+                print(f"⚠ {result['title']}: Slow performance ({result['fetch_time']:.2f}s)")
+    
+    return results
+
+if __name__ == "__main__":
+    test_mal_optimization()
+
+=== Folder: .vscode ===
+
+=== Folder: spiders ===
+
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\spiders\animeplanet_spider.py ---
+# spiders/animeplanet_spider.py
+# Scrapy spider => collects details, reviews, recommendations from anime-planet manga page
+# Usage:
+#   scrapy runspider spiders/animeplanet_spider.py -a slug=tower-of-god
+
+import os
+import json
+import random
+import logging
+from datetime import datetime
+from urllib.parse import urljoin
+
+import pymongo
+import scrapy
+from scrapy.crawler import CrawlerProcess
+
+logger = logging.getLogger("animeplanet_spider")
+
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
+MONGO_DB = os.environ.get("MONGO_DB", "manga_raw_data")
+COLLECTION = "animeplanet_data"
+
+# A reasonably sized UA pool (extend as needed)
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 13; Pixel 7a) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36",
+]
+
+def mongo_client():
+    return pymongo.MongoClient(MONGO_URI)
+
+
+class AnimePlanetSpider(scrapy.Spider):
+    name = "animeplanet_spider"
+    # Conservative settings to reduce chance of being blocked
+    custom_settings = {
+        "DOWNLOAD_DELAY": 3.0,
+        "CONCURRENT_REQUESTS": 1,
+        "RETRY_ENABLED": False,
+        "COOKIES_ENABLED": True,
+        # ensure default headers (can be overridden per request)
+        "DEFAULT_REQUEST_HEADERS": {
+            "Accept-Language": "en-US,en;q=0.9",
+            "DNT": "1",
+            "Referer": "https://www.google.com/",
+            "Connection": "keep-alive",
+        },
+    }
+
+    def __init__(self, slug=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not slug:
+            raise ValueError("Missing required slug argument (e.g. tower-of-god)")
+        self.slug = slug.strip().rstrip("/")
+        self.start_urls = [f"https://www.anime-planet.com/manga/{self.slug}"]
+        self.client = mongo_client()
+        self.db = self.client[MONGO_DB]
+        self.col = self.db[COLLECTION]
+        self.doc_id = f"ap_{self.slug}"
+
+        # proxy from env (optional)
+        self.proxy = os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
+
+    def _headers(self):
+        ua = random.choice(USER_AGENTS)
+        headers = {
+            "User-Agent": ua,
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.google.com/",
+            "DNT": "1",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+        }
+        return headers
+
+    def start_requests(self):
+        for url in self.start_urls:
+            meta = {"retries": 0}
+            if self.proxy:
+                meta["proxy"] = self.proxy
+            yield scrapy.Request(url, headers=self._headers(), callback=self.parse_main, errback=self.errback, dont_filter=True, meta=meta)
+
+    def errback(self, failure):
+        logger.error("Request failure: %s", failure)
+        doc = {
+            "_id": self.doc_id,
+            "fetched_at": datetime.utcnow().isoformat(),
+            "source": "animeplanet",
+            "source_id": self.slug,
+            "source_url": f"https://www.anime-planet.com/manga/{self.slug}",
+            "http": {"error": str(failure.value) if failure.value else "request_failed"},
+            "status": "error",
+        }
+        try:
+            self.col.replace_one({"_id": self.doc_id}, doc, upsert=True)
+        except Exception:
+            logger.exception("Failed to save error doc to mongo", exc_info=True)
+
+    def parse_main(self, response):
+        # If blocked (403), retry a few times with different UA and optional proxy
+        if response.status == 403:
+            retries = response.request.meta.get("retries", 0)
+            if retries < 3:
+                logger.warning("Received 403 for %s, retrying attempt %d", response.url, retries + 1)
+                meta = {"retries": retries + 1}
+                if self.proxy:
+                    meta["proxy"] = self.proxy
+                yield scrapy.Request(response.url, headers=self._headers(), callback=self.parse_main, errback=self.errback, dont_filter=True, meta=meta)
+                return
+            else:
+                logger.warning("403 after retries for %s — saving forbidden doc", response.url)
+                doc = {
+                    "_id": self.doc_id,
+                    "fetched_at": datetime.utcnow().isoformat(),
+                    "source": "animeplanet",
+                    "source_id": self.slug,
+                    "source_url": response.url,
+                    "http": {"code": 403},
+                    "raw_prefix": response.text[:20000] if hasattr(response, "text") else None,
+                    "status": "forbidden",
+                }
+                self.col.replace_one({"_id": self.doc_id}, doc, upsert=True)
+                return
+
+        # Collect main info (title, synopsis, rating if available)
+        title = response.xpath("//h1/text()").get()
+        synopsis = response.xpath("//div[contains(@class,'synopsis')]/p//text()").getall()
+        synopsis = " ".join([s.strip() for s in synopsis]).strip()
+        if not synopsis:
+            synopsis = response.xpath("//meta[@name='description']/@content").get() or ""
+
+        rating = response.xpath("//div[contains(@class,'avgRating') or contains(@class,'rating')]/text()").get()
+        if rating:
+            rating = rating.strip()
+
+        recs = []
+        rec_selectors = [
+            "//section[contains(. , 'Similar') or contains(. , 'recommend')]/.//a[contains(@href,'/manga/')]/@href",
+            "//a[contains(@class,'similar') and contains(@href,'/manga/')]/@href",
+            "//div[contains(@class,'recommendations')]//a[contains(@href,'/manga/')]/@href",
+            "//a[contains(@href,'/manga/') and contains(@class,'media')]/@href",
+        ]
+        for sel in rec_selectors:
+            items = response.xpath(sel).getall()
+            if items:
+                for href in items:
+                    href = href.strip()
+                    if href.startswith("/"):
+                        href = urljoin("https://www.anime-planet.com", href)
+                    if "/manga/" in href:
+                        slug = href.split("/manga/")[-1].split("?")[0].split("#")[0].strip("/")
+                    else:
+                        slug = href
+                    recs.append({"slug": slug, "url": href})
+                break
+
+        # request reviews page
+        reviews_url = response.url.rstrip("/") + "/reviews"
+        meta = {"main": {"title": title, "synopsis": synopsis, "rating": rating, "recs": recs}, "retries": 0}
+        if self.proxy:
+            meta["proxy"] = self.proxy
+        yield scrapy.Request(reviews_url, headers=self._headers(), callback=self.parse_reviews, meta=meta, dont_filter=True, errback=self.errback)
+
+    def parse_reviews(self, response):
+        main = response.meta.get("main", {})
+        if response.status == 403:
+            retries = response.request.meta.get("retries", 0)
+            if retries < 3:
+                logger.warning("Reviews page 403 for %s, retry attempt %d", response.url, retries + 1)
+                meta = response.request.meta.copy()
+                meta["retries"] = retries + 1
+                if self.proxy:
+                    meta["proxy"] = self.proxy
+                yield scrapy.Request(response.url, headers=self._headers(), callback=self.parse_reviews, meta=meta, dont_filter=True, errback=self.errback)
+                return
+            else:
+                logger.warning("Reviews page forbidden after retries %s", response.url)
+                doc = {
+                    "_id": self.doc_id,
+                    "fetched_at": datetime.utcnow().isoformat(),
+                    "source": "animeplanet",
+                    "source_id": self.slug,
+                    "source_url": f"https://www.anime-planet.com/manga/{self.slug}",
+                    "http": {"code": 403},
+                    "raw_prefix": response.text[:20000] if hasattr(response, "text") else None,
+                    "status": "forbidden_reviews",
+                }
+                self.col.replace_one({"_id": self.doc_id}, doc, upsert=True)
+                return
+
+        reviews = []
+        review_nodes = response.xpath("//div[contains(@class,'user-review') or contains(@class,'review') or //article[contains(@class,'review')]]")
+        if not review_nodes:
+            review_nodes = response.xpath("//li[contains(@class,'review') or contains(@class,'comment')]")
+        for node in review_nodes:
+            user = node.xpath(".//a[contains(@href,'/user/')]/text() | .//h3//text()").get()
+            score = node.xpath(".//span[contains(@class,'score')]/text() | .//div[contains(@class,'rating')]/text()").get()
+            parts = node.xpath(".//div[contains(@class,'review-body')]//text() | .//p//text()").getall()
+            content = " ".join([p.strip() for p in parts]).strip()
+            date = node.xpath(".//time/@datetime | .//span[contains(@class,'date')]/text() | .//time/text()").get()
+            reviews.append({"user": user.strip() if user else None, "score": score.strip() if score else None, "content": content, "date": date})
+
+        # try JSON-LD fallback
+        if not reviews:
+            ld = response.xpath("//script[@type='application/ld+json']/text()").get()
+            if ld:
+                try:
+                    parsed = json.loads(ld)
+                    if isinstance(parsed, dict) and parsed.get("review"):
+                        rv = parsed.get("review")
+                        if isinstance(rv, list):
+                            for r in rv:
+                                reviews.append({
+                                    "user": r.get("author", {}).get("name") if isinstance(r.get("author"), dict) else r.get("author"),
+                                    "score": r.get("reviewRating", {}).get("ratingValue") if r.get("reviewRating") else None,
+                                    "content": r.get("reviewBody"),
+                                    "date": r.get("datePublished"),
+                                })
+                except Exception:
+                    logger.debug("Failed parse ld+json on %s", response.url, exc_info=True)
+
+        doc = {
+            "_id": self.doc_id,
+            "fetched_at": datetime.utcnow().isoformat(),
+            "source": "animeplanet",
+            "source_id": self.slug,
+            "source_url": f"https://www.anime-planet.com/manga/{self.slug}",
+            "status": "ok" if reviews or main.get("recs") else ("empty" if not reviews and not main.get("recs") else "partial"),
+            "main": {
+                "title": main.get("title"),
+                "synopsis": main.get("synopsis"),
+                "rating": main.get("rating"),
+                "recommendations": main.get("recs"),
+            },
+            "reviews": reviews,
+            "raw_prefix": response.text[:20000] if hasattr(response, "text") else None
+        }
+        self.col.replace_one({"_id": self.doc_id}, doc, upsert=True)
+        logger.info("[SAVED] %s %s | reviews=%d recs=%d status=%s", COLLECTION, self.doc_id, len(reviews), len(main.get("recs", [])), doc["status"])
+
+
+if __name__ == "__main__":
+    slug = os.environ.get("AP_SLUG", "tower-of-god")
+    process = CrawlerProcess(settings={})
+    process.crawl(AnimePlanetSpider, slug=slug)
+    process.start()
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\spiders\drop_collections.py ---
+# scripts/drop_collections.py
+# simple script to drop the 4 collections used for testing
+# Usage:
+#   python scripts/drop_collections.py
+# or set MONGO_URI / MONGO_DB env vars if not default
+
+import os
+import pymongo
+
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
+MONGO_DB = os.environ.get("MONGO_DB", "manga_raw_data")
+
+COLLECTIONS = ["animeplanet_data", "mangaupdates_data", "mal_data", "anilist_data"]
+
+def main():
+    client = pymongo.MongoClient(MONGO_URI)
+    db = client[MONGO_DB]
+    for c in COLLECTIONS:
+        if c in db.list_collection_names():
+            db.drop_collection(c)
+            print(f"Dropped collection: {c}")
+        else:
+            print(f"Collection not found (skipped): {c}")
+
+if __name__ == "__main__":
+    main()
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\spiders\mal_manga_spider.py ---
+import pymongo
+import logging
+from pathlib import Path
+import scrapy
+from src.extractors.mal_fetcher import get_full_data
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# MongoDB connection
+MONGO_URI = "mongodb://localhost:27017"
+DB_NAME = "manga_raw_data"
+COLLECTION_NAME = "mal_data"  # Đồng bộ với pipeline
+
+def get_mongo_collection():
+    client = pymongo.MongoClient(MONGO_URI)
+    db = client[DB_NAME]
+    return db[COLLECTION_NAME]
+
+# MAL Constants
+MAL_BASE = "https://myanimelist.net"
+
+class MALMangaSpider(scrapy.Spider):
+    name = 'mal_manga_spider'
+    custom_settings = {
+        'DOWNLOAD_DELAY': 3,
+        'CONCURRENT_REQUESTS': 1,
+        'RETRY_TIMES': 3,
+        'RETRY_HTTP_CODES': [500, 502, 503, 504, 429],
+        'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'FEED_EXPORT_ENCODING': 'utf-8',
+    }
+
+    def __init__(self):
+        self.collection = get_mongo_collection()
+        self.temp_folder = Path('tmp/mal_manga_data')
+        self.temp_folder.mkdir(parents=True, exist_ok=True)
+        self.rank_increment = 50
+
+    def start_requests(self):
+        rank_url = f'{MAL_BASE}/topmanga.php?limit=0'
+        yield scrapy.Request(url=rank_url, callback=self.parse_rank)
+
+    def parse_rank(self, response):
+        works = response.css('tr.ranking-list')
+        info_urls = [work.css('a.hoverinfo_trigger::attr(href)').get() for work in works]
+
+        for info_url in info_urls:
+            if info_url:
+                yield scrapy.Request(url=info_url, callback=self.parse_manga)
+
+        current_limit = int(response.url.split('=')[-1])
+        if len(works) == self.rank_increment:
+            next_limit = current_limit + self.rank_increment
+            next_url = f'{MAL_BASE}/topmanga.php?limit={next_limit}'
+            yield scrapy.Request(url=next_url, callback=self.parse_rank)
+
+    def parse_manga(self, response):
+        mal_id = response.url.split('/')[-2]
+        
+        existing = self.collection.find_one({'_id': f'mal_{mal_id}'})
+        if existing:
+            logger.info(f'Skipping existing manga {mal_id}')
+            return
+        
+        data = get_full_data(mal_id)
+        if data and data.get('status') == 'ok':
+            self.collection.insert_one(data)
+            logger.info(f'Inserted manga {mal_id} into MongoDB')
+        else:
+            logger.warning(f'Failed to fetch data for manga {mal_id}')
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\spiders\mal_spider.py ---
+import scrapy
+from scrapy.http import Request
+from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
+
+class MalSpider(scrapy.Spider):
+    name = "mal_spider"
+    allowed_domains = ["myanimelist.net"]
+    custom_settings = {
+        'DOWNLOAD_DELAY': 2,
+        'CONCURRENT_REQUESTS': 4,
+        'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    }
+
+    def __init__(self, mal_id=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.mal_id = mal_id
+        self.start_urls = [f"https://myanimelist.net/manga/{mal_id}"]
+        self.payload = {
+            "_id": f"mal_{mal_id}",
+            "source": "mal",
+            "source_id": mal_id,
+            "source_url": f"https://myanimelist.net/manga/{mal_id}",
+            "fetched_at": datetime.utcnow().isoformat(),
+            "manga_info": {},
+            "recommendations": [],
+            "reviews": [],
+            "status": "ok",
+            "http": {"code": 200},
+        }
+
+    def parse(self, response):
+        # Parse manga info
+        info = {}
+        info['jpName'] = response.xpath('//span[contains(text(), "Japanese:")]/following::text()').get(default='').strip()
+        info['engName'] = response.xpath('//span[contains(text(), "English:")]/following::text()').get(default='').strip()
+        info['synonyms'] = response.xpath('//span[contains(text(), "Synonyms:")]/following::text()').get(default='').strip()
+        info['type'] = response.xpath('//span[text()="Type:"]/following-sibling::a/text()').get(default='')
+        info['volumes'] = response.xpath('//span[text()="Volumes:"]/following::text()').get(default='').strip()
+        info['chapters'] = response.xpath('//span[text()="Chapters:"]/following::text()').get(default='').strip()
+        info['status'] = response.xpath('//span[text()="Status:"]/following::text()').get(default='').strip()
+        info['published'] = response.xpath('//span[text()="Published:"]/following::text()').get(default='').strip()
+        info['genres'] = ', '.join(response.xpath('//span[text()="Genres:"]/following-sibling::a/text()').getall())
+        info['themes'] = ', '.join(response.xpath('//span[text()="Themes:"]/following-sibling::a/text()').getall())
+        info['demographic'] = response.xpath('//span[text()="Demographic:"]/following-sibling::a/text()').get(default='')
+        info['serialization'] = ', '.join(response.xpath('//span[text()="Serialization:"]/following-sibling::a/text()').getall())
+        info['authors'] = ', '.join(response.xpath('//span[text()="Authors:"]/following-sibling::a/text()').getall())
+        info['score'] = response.css('span.score-label::text').get(default='')
+        info['ranked'] = response.xpath('//span[text()="Ranked:"]/following::text()').get(default='').strip()
+        info['popularity'] = response.xpath('//span[text()="Popularity:"]/following::text()').get(default='').strip()
+        info['members'] = response.xpath('//span[text()="Members:"]/following::text()').get(default='').strip()
+        info['favorites'] = response.xpath('//span[text()="Favorites:"]/following::text()').get(default='').strip()
+        info['cover_image'] = response.css('div.leftside img.lazyload::attr(src)').get(default=response.css('div.leftside img.lazyload::attr(data-src)').get(default=''))
+        info['synopsis'] = response.xpath('//span[@itemprop="description"]/text()').get(default='').strip()
+        
+        self.payload["manga_info"] = info
+        logger.info(f"Parsed manga info for {self.mal_id}: {bool(info)}")
+        
+        # Fetch recommendations
+        yield Request(
+            f"https://myanimelist.net/manga/{self.mal_id}/_/userrecs",
+            callback=self.parse_recommendations,
+            meta={'mal_id': self.mal_id}
+        )
+        
+        # Fetch reviews
+        yield Request(
+            f"https://myanimelist.net/manga/{self.mal_id}/reviews?p=1",
+            callback=self.parse_reviews,
+            meta={'mal_id': self.mal_id, 'page': 1}
+        )
+
+    def parse_recommendations(self, response):
+        recs = []
+        for a in response.css('div.borderClass a[href*="/manga/"]'):
+            href = a.attrib.get('href', '')
+            title = a.css('::text').get(default='').strip()
+            if "/manga/" not in href or not title or len(title) < 2:
+                continue
+            try:
+                mid = href.split("/manga/")[1].split("/")[0]
+                if mid.isdigit():
+                    reason = a.xpath('following-sibling::div/text()').get(default='').strip()[:200]
+                    recs.append({
+                        "id": mid,
+                        "title": title,
+                        "url": href,
+                        "reason": reason
+                    })
+            except Exception:
+                continue
+        
+        seen = set()
+        unique_recs = [rec for rec in recs if rec["id"] not in seen and not seen.add(rec["id"])]
+        self.payload["recommendations"] = unique_recs[:20]
+        logger.info(f"Parsed {len(unique_recs)} recommendations for {self.mal_id}")
+
+    def parse_reviews(self, response):
+        mal_id = response.meta['mal_id']
+        page = response.meta['page']
+        
+        reviews = []
+        for review in response.css('div.review-element, div.review-element.js-review-element, div.borderDark'):
+            try:
+                review_id = review.css('div.open a::attr(href), a[href*="/reviews/"]::attr(href)').get(default='').split('/')[-1]
+                if not review_id:
+                    logger.debug(f"No review ID found for {mal_id} on page {page}")
+                    continue
+                
+                review_text = ' '.join(review.css('div.text, div.review-body').get(default='').strip().split())
+                if not review_text or len(review_text) < 5:
+                    logger.debug(f"Skipping short review for {mal_id}: {review_text[:50]}...")
+                    continue
+                
+                reactions_dict = review.attrib.get('data-reactions', '')
+                reactions = {}
+                if reactions_dict:
+                    try:
+                        import json
+                        reactions_data = json.loads(reactions_dict)
+                        reaction_type_map = ['nice', 'loveIt', 'funny', 'confusing', 'informative', 'wellWritten', 'creative']
+                        reactions = {r: c for r, c in zip(reaction_type_map, reactions_data.get('count', ['0']*7))}
+                    except:
+                        logger.debug(f"Error parsing reactions for {mal_id}: {reactions_dict}")
+                
+                author = review.css('div.username a::text, div.reviewer a::text').get(default='').strip()
+                score = review.css('div.rating span.num::text, div.score::text').get(default='').strip()
+                post_time = review.css('div.update_at::text, div.date::text').get(default='').strip()
+                episodes_seen = review.css('.tag.preliminary span::text, div.episodes-seen::text').get(default='').strip()
+                recommendation_status = review.css('.tag.recommended::text, .tag.recommendation::text').get(default='').strip()
+                profile_url = review.css('div.thumb a::attr(href), div.reviewer a::attr(href)').get(default='')
+                profile_img = review.css('div.thumb a img::attr(src), div.reviewer img::attr(src)').get(default='')
+                
+                reviews.append({
+                    'reviewId': review_id,
+                    'text': review_text[:3000],
+                    'author': author,
+                    'score': score,
+                    'postTime': post_time,
+                    'episodesSeen': episodes_seen,
+                    'recommendationStatus': recommendation_status,
+                    'profileUrl': profile_url,
+                    'profileImage': profile_img,
+                    **reactions
+                })
+            except Exception as e:
+                logger.debug(f"Error parsing review for {mal_id}: {e}")
+                continue
+        
+        self.payload["reviews"].extend(reviews)
+        logger.info(f"Parsed {len(reviews)} reviews for {mal_id} on page {page}")
+        
+        # Check for next page
+        next_page_url = response.css('a[href*="reviews?p="]:not([href*="p=1"])::attr(href), div.mt4 a[href*="reviews?p="]::attr(href)').get()
+        if next_page_url:
+            if not next_page_url.startswith('http'):
+                next_page_url = f"https://myanimelist.net{next_page_url}"
+            logger.debug(f"Found next page for {mal_id}: {next_page_url}")
+            yield Request(
+                next_page_url,
+                callback=self.parse_reviews,
+                meta={'mal_id': mal_id, 'page': page + 1}
+            )
+        else:
+            logger.info(f"No next page for reviews of {mal_id} after page {page}")
+            yield self.payload
+
+    def closed(self, reason):
+        logger.info(f"Spider closed for {self.mal_id}: {reason}")
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\spiders\mangaupdates_spider.py ---
+# spiders/mangaupdates_spider.py
+# Scrapy spider => collects comments (reviews) from MangaUpdates series page
+# Example usage:
+#   scrapy runspider spiders/mangaupdates_spider.py -a mu_url="https://www.mangaupdates.com/series/...#comments"
+
+import os
+import random
+import logging
+from datetime import datetime
+from urllib.parse import urlparse
+
+import pymongo
+import scrapy
+from scrapy.crawler import CrawlerProcess
+
+logger = logging.getLogger("mangaupdates_spider")
+
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
+MONGO_DB = os.environ.get("MONGO_DB", "manga_raw_data")
+COLLECTION = "mangaupdates_data"
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
+]
+
+def mongo_client():
+    return pymongo.MongoClient(MONGO_URI)
+
+
+class MangaUpdatesSpider(scrapy.Spider):
+    name = "mangaupdates_spider"
+    custom_settings = {
+        "DOWNLOAD_DELAY": 2.0,
+        "CONCURRENT_REQUESTS": 2,
+        "RETRY_ENABLED": False,
+        "COOKIES_ENABLED": True,
+    }
+
+    def __init__(self, mu_id=None, mu_url=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not (mu_id or mu_url):
+            raise ValueError("Provide mu_id or mu_url to spider")
+        self.mu_id = str(mu_id) if mu_id else None
+        self.mu_url = mu_url
+        self.client = mongo_client()
+        self.db = self.client[MONGO_DB]
+        self.col = self.db[COLLECTION]
+        if self.mu_id:
+            self.doc_id = f"mu_{self.mu_id}"
+        else:
+            path = urlparse(self.mu_url).path.strip("/").replace("/", "_")
+            self.doc_id = f"mu_{path}"
+        if self.mu_url:
+            self.start_urls = [self.mu_url]
+        else:
+            self.start_urls = []
+
+    def start_requests(self):
+        if not self.start_urls:
+            logger.error("No start_urls for MangaUpdatesSpider. Provide mu_url.")
+            return
+        for url in self.start_urls:
+            headers = {"User-Agent": random.choice(USER_AGENTS), "Accept-Language": "en-US,en;q=0.9"}
+            parsed = url.split("?")[0]
+            base_with_comments = parsed + "?perpage=100&page=1#comments"
+            yield scrapy.Request(base_with_comments, headers=headers, callback=self.parse_comments, meta={"page": 1, "base": parsed}, dont_filter=True)
+
+    def parse_comments(self, response):
+        if response.status == 403:
+            logger.warning("403 on MangaUpdates %s", response.url)
+            doc = {
+                "_id": self.doc_id,
+                "fetched_at": datetime.utcnow().isoformat(),
+                "source": "mangaupdates",
+                "source_url": self.start_urls[0] if self.start_urls else None,
+                "http": {"code": 403},
+                "status": "forbidden",
+                "raw_prefix": response.text[:20000] if hasattr(response, "text") else None,
+            }
+            self.col.replace_one({"_id": self.doc_id}, doc, upsert=True)
+            return
+
+        page = response.meta.get("page", 1)
+        base = response.meta.get("base", response.url.split("?")[0])
+        comments = []
+
+        # Try multiple selectors (existing heuristics kept)
+        comment_nodes = response.xpath("//div[@id='comments']//div[contains(@class,'postbody')] | //div[@id='comments']//li[contains(@class,'comment') or contains(@class,'post')]")
+        if not comment_nodes:
+            comment_nodes = response.xpath("//div[contains(@class,'post') and contains(@class,'postbody')] | //li[contains(@class,'comment')]")
+
+        for node in comment_nodes:
+            user = node.xpath(".//a[contains(@href,'member.php')]/text() | .//a[contains(@href,'members')]/text() | .//span[@class='username']//text()").get()
+            content_parts = node.xpath(".//div[contains(@class,'postbody')]//text() | .//p//text()").getall()
+            content = " ".join([c.strip() for c in content_parts]).strip()
+            date = node.xpath(".//span[contains(@class,'date')]/text() | .//div[contains(@class,'postdate')]//text() | .//abbr[@class='published']/@title").get()
+            comments.append({"user": user.strip() if user else None, "content": content, "date": date})
+
+        existing = self.col.find_one({"_id": self.doc_id}) or {}
+        all_comments = existing.get("comments", [])
+        existing_texts = {c.get("content") for c in all_comments}
+        new_added = 0
+        for c in comments:
+            if c.get("content") and c.get("content") not in existing_texts:
+                all_comments.append(c)
+                new_added += 1
+
+        doc = {
+            "_id": self.doc_id,
+            "fetched_at": datetime.utcnow().isoformat(),
+            "source": "mangaupdates",
+            "source_url": base,
+            "page_last_fetched": page,
+            "comments": all_comments,
+            "status": "ok" if all_comments else "no_comments",
+            "raw_prefix": response.text[:20000] if hasattr(response, "text") else None,
+        }
+        self.col.replace_one({"_id": self.doc_id}, doc, upsert=True)
+        logger.info("[SAVED] %s %s | page=%d comments_page=%d total=%d", COLLECTION, self.doc_id, page, len(comments), len(all_comments))
+
+        # determine next page
+        next_page = page + 1
+        next_url = f"{base}?perpage=100&page={next_page}#comments"
+        if comments and len(comments) >= 100:
+            yield scrapy.Request(next_url, headers={"User-Agent": random.choice(USER_AGENTS)}, callback=self.parse_comments, meta={"page": next_page, "base": base}, dont_filter=True)
+        else:
+            logger.info("No more comment pages or last page detected for %s", base)
+
+
+if __name__ == "__main__":
+    mu_url = os.environ.get("MU_URL")
+    if not mu_url:
+        print("Set MU_URL environment variable to a mangaupdates series page URL to test directly.")
+    else:
+        process = CrawlerProcess(settings={})
+        process.crawl(MangaUpdatesSpider, mu_url=mu_url)
+        process.start()
+
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\spiders\review_spider.py ---
+import scrapy
+import re
+
+
+class ReviewSpider(scrapy.Spider):
+    name = "review_spider"
+
+    def __init__(self, mal_id=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not mal_id:
+            raise ValueError("mal_id is required. Example: -a mal_id=1")
+        self.start_urls = [f"https://myanimelist.net/manga/{mal_id}/_/reviews"]
+
+    def parse(self, response):
+        reviews = response.css("div.review-element")
+
+        for r in reviews:
+            user = r.css("div.username a::text").get() or r.css("div.username::text").get()
+            user = user.strip() if user else None
+
+            score_text = r.css("div.rating span.num::text").get()
+            score = int(score_text) if score_text and score_text.isdigit() else None
+
+            date_text = r.css("div.update_at::text").get()
+            date = date_text.strip() if date_text else None
+
+            content_parts = r.css("div.text::text, div.text *::text").getall()
+            content = " ".join([c.strip() for c in content_parts if c.strip()])
+
+            tags = r.css("div.tags span.tag::text").getall()
+            tags = [t.strip() for t in tags if t.strip()]
+
+            yield {
+                "user": user,
+                "score": score,
+                "content": content,
+                "date": date,
+                "tags": tags,
+            }
+
+        next_page = response.css("div.pagination a.next::attr(href)").get()
+        if next_page:
+            yield response.follow(next_page, callback=self.parse)
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\spiders\settings.py ---
+# src/spiders/settings.py
+
+# Cấu hình mặc định cho tất cả spiders
+
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/128.0.0.0 Safari/537.36"
+)
+
+DEFAULT_HEADERS = {
+    "User-Agent": DEFAULT_USER_AGENT,
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;"
+        "q=0.9,image/avif,image/webp,*/*;q=0.8"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.google.com/",
+    "DNT": "1",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+}
+
+SPIDER_SETTINGS = {
+    "COOKIES_ENABLED": True,
+    "DOWNLOAD_DELAY": 1.5,
+    "DEFAULT_REQUEST_HEADERS": DEFAULT_HEADERS,
+}
+
+# Scrapy settings for manga scraping project
+
+BOT_NAME = 'manga_scraper'
+
+SPIDER_MODULES = ['spiders']
+NEWSPIDER_MODULE = 'spiders'
+
+# Obey robots.txt rules
+ROBOTSTXT_OBEY = False
+
+# Configure maximum concurrent requests
+CONCURRENT_REQUESTS = 128
+CONCURRENT_REQUESTS_PER_DOMAIN = 64
+DOWNLOAD_DELAY = 0.1
+
+# Enable autothrottle
+AUTOTHROTTLE_ENABLED = True
+AUTOTHROTTLE_START_DELAY = 0.1
+AUTOTHROTTLE_MAX_DELAY = 5.0
+AUTOTHROTTLE_TARGET_CONCURRENCY = 8.0
+
+# Retry settings
+RETRY_HTTP_CODES = [429, 500, 502, 503, 504]
+RETRY_TIMES = 10
+
+# Disable cookies
+COOKIES_ENABLED = False
+
+# Enable User-Agent rotation
+DOWNLOADER_MIDDLEWARES = {
+    'scrapy_user_agents.middlewares.RandomUserAgentMiddleware': 400,
+    'scrapy.downloadermiddlewares.retry.RetryMiddleware': 500,
+    'scrapy.downloadermiddlewares.httpproxy.HttpProxyMiddleware': 350,
+}
+
+# Proxy settings (uncomment and configure with your proxy service)
+# PROXY_POOL_ENABLED = True
+# PROXY_POOL = [
+#     'http://proxy1:port',
+#     'http://proxy2:port',
+# ]
+
+# Default headers
+DEFAULT_REQUEST_HEADERS = {
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'DNT': '1',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+}
+
+# Logging
+LOG_ENABLED = True
+LOG_LEVEL = 'INFO'
+
+# Export encoding
+FEED_EXPORT_ENCODING = 'utf-8'
+=== Folder: src ===
+
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\config.py ---
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+MONGO_DB = os.getenv("MONGO_DB", "manga_raw_data")
+
+WORKERS = int(os.getenv("WORKERS", "6"))
+
+AP_MAX_PAGES_REVIEWS = int(os.getenv("AP_MAX_PAGES_REVIEWS", "2"))
+AP_MAX_PAGES_RECS = int(os.getenv("AP_MAX_PAGES_RECS", "2"))
+MU_MAX_PAGES_COMMENTS = int(os.getenv("MU_MAX_PAGES_COMMENTS", "2"))
+
+MIN_HOST_INTERVAL = float(os.getenv("MIN_HOST_INTERVAL", "0.8"))
+HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "30"))
+
+# User-Agent chuẩn tử tế để tránh bị chặn sớm
+DEFAULT_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/126.0.0.0 Safari/537.36"
+)
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\db.py ---
+from pymongo import MongoClient
+import os
+
+# Mongo connection string (mặc định localhost:27017, database = manga_raw_data)
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+
+# Tạo client global (chỉ cần 1 kết nối cho toàn project)
+_client = MongoClient(MONGO_URI)
+
+
+def get_db(db_name: str):
+    """Trả về database object."""
+    return _client[db_name]
+
+
+def get_collection(db_name: str, col_name: str):
+    """Trả về collection object."""
+    db = get_db(db_name)
+    return db[col_name]
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\enrich_links.py ---
+from pymongo import MongoClient
+from tqdm import tqdm
+
+def enrich_links():
+    client = MongoClient("mongodb://localhost:27017")
+    db = client["manga_raw_data"]
+    col = db["mangadex_manga"]
+
+    cursor = col.find({}, no_cursor_timeout=True)
+
+    for doc in tqdm(cursor, desc="Enriching"):
+        links = doc.get("links") or {}
+        updates = {}
+        if "al" in links:
+            updates["anilist_id"] = links["al"]
+        if "ap" in links:
+            updates["ap_slug"] = links["ap"]
+        if "mu" in links:
+            updates["mu_id"] = links["mu"]
+        if "mal" in links:
+            updates["mal_id"] = links["mal"]
+
+        if updates:
+            col.update_one({"_id": doc["_id"]}, {"$set": updates})
+
+    cursor.close()
+    client.close()
+
+if __name__ == "__main__":
+    enrich_links()
+    print("✅ Done enriching links")
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\http_client.py ---
+import requests
+from tenacity import retry, wait_fixed, stop_after_attempt
+
+
+class HttpError(Exception):
+    pass
+
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/120.0 Safari/537.36"
+}
+
+
+@retry(wait=wait_fixed(2), stop=stop_after_attempt(3))
+def http_get(url, params=None, headers=None, allow_statuses=None, allow_404=False):
+    hdrs = HEADERS.copy()
+    if headers:
+        hdrs.update(headers)
+
+    resp = requests.get(url, params=params, headers=hdrs, timeout=15)
+
+    # Cho phép các status code đặc biệt
+    if allow_statuses and resp.status_code in allow_statuses:
+        return resp
+    if allow_404 and resp.status_code == 404:
+        return resp
+
+    if resp.status_code != 200:
+        raise HttpError(f"GET {url} -> {resp.status_code}")
+
+    return resp
+
+
+@retry(wait=wait_fixed(2), stop=stop_after_attempt(3))
+def http_post(url, json=None, data=None, headers=None, allow_statuses=None, allow_404=False):
+    hdrs = HEADERS.copy()
+    if headers:
+        hdrs.update(headers)
+
+    resp = requests.post(url, json=json, data=data, headers=hdrs, timeout=15)
+
+    if allow_statuses and resp.status_code in allow_statuses:
+        return resp
+    if allow_404 and resp.status_code == 404:
+        return resp
+
+    if resp.status_code != 200:
+        raise HttpError(f"POST {url} -> {resp.status_code}")
+
+    return resp
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\pipeline.py ---
+import logging
+from typing import List, Dict, Optional
+from pymongo import MongoClient
+from extractors.mal import collect_mal, collect_mal_ranking_based
+from extractors.anilist import collect_anilist
+from extractors.animeplanet import collect_animeplanet
+from extractors.mangaupdates import collect_mangaupdates
+from scrapy.crawler import CrawlerProcess
+from spiders.mal_manga_spider import MALMangaSpider
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# MongoDB connection
+MONGO_URI = "mongodb://localhost:27017"
+DB_NAME = "manga_raw_data"
+
+def get_mongo_collection(source: str):
+    client = MongoClient(MONGO_URI)
+    db = client[DB_NAME]
+    # Đồng bộ với spider: mal -> mal_data, anilist -> anilist_data, etc.
+    return db[f"{source}_data"]
+
+def run_mal_ranking_based_crawl(start_limit: int = 0, max_pages: int = 100):
+    """Run independent MAL ranking-based collection like project_dump.txt approach"""
+    logger.info(f"Starting MAL ranking-based collection from limit {start_limit}")
+    try:
+        collection = get_mongo_collection("mal")
+        results = collect_mal_ranking_based(start_limit, max_pages)
+        
+        inserted_count = 0
+        for result in results:
+            if result.get("status") in ["ok", "no_reviews"]:
+                existing = collection.find_one({"_id": result["_id"]})
+                if not existing:
+                    collection.insert_one(result)
+                    inserted_count += 1
+                    logger.debug(f"Inserted MAL data for {result.get('source_id')}")
+                else:
+                    logger.debug(f"Skipped existing MAL data for {result.get('source_id')}")
+            else:
+                logger.warning(f"Failed MAL data for {result.get('source_id')}: {result.get('http', {})}")
+        
+        logger.info(f"MAL ranking-based collection completed: {inserted_count}/{len(results)} inserted")
+        return results
+    except Exception as e:
+        logger.error(f"MAL ranking-based collection failed: {e}", exc_info=True)
+        return []
+
+def run_mal_manga_crawl():
+    """Run MAL Manga Spider to crawl top manga list independently"""
+    logger.info("Starting MAL Manga Crawler Spider")
+    try:
+        process = CrawlerProcess()
+        process.crawl(MALMangaSpider)
+        process.start()
+        logger.info("MAL Manga Crawler completed")
+    except Exception as e:
+        logger.error(f"MAL Manga Crawler failed: {e}", exc_info=True)
+
+def run_pipeline(limit: int = 5, skip: int = 0, only: Optional[List[str]] = None) -> List[Dict]:
+    """Run the manga data pipeline for specified sources"""
+    results = []
+    sources = only if only else ["mal", "anilist", "mangaupdates", "animeplanet"]
+    
+    # Sample IDs for testing (replace with actual source of IDs, e.g., from a file or DB)
+    sample_ids = {
+        "mal": ["1", "2", "1706", "23390", "30013"],  # Example MAL IDs
+        "anilist": ["30001", "30002", "31706", "87216", "98448"],
+        "mangaupdates": ["1234", "5678", "9012", "3456", "7890"],
+        "animeplanet": ["naruto", "one-piece", "attack-on-titan", "berserk", "fullmetal-alchemist"]
+    }
+
+    for source in sources:
+        logger.info(f"Processing source: {source}")
+        collection = get_mongo_collection(source)
+        
+        # Get IDs to process
+        ids_to_process = sample_ids.get(source, [])[skip:skip+limit]
+        
+        for source_id in ids_to_process:
+            try:
+                logger.info(f"Fetching {source} data for ID: {source_id}")
+                if source == "mal":
+                    result = collect_mal(source_id=source_id)  # Không cần mangadex_id
+                elif source == "anilist":
+                    result = collect_anilist(source_id=source_id)
+                elif source == "mangaupdates":
+                    result = collect_mangaupdates(source_id=source_id)
+                elif source == "animeplanet":
+                    result = collect_animeplanet(source_id=source_id)
+                else:
+                    logger.warning(f"Unknown source: {source}")
+                    continue
+                
+                # Insert into MongoDB
+                if result.get("status") in ["ok", "no_reviews"]:
+                    existing = collection.find_one({"_id": result["_id"]})
+                    if not existing:
+                        collection.insert_one(result)
+                        logger.info(f"Inserted {source} data for {source_id}")
+                    else:
+                        logger.info(f"Skipped existing {source} data for {source_id}")
+                else:
+                    logger.warning(f"Failed to fetch {source} data for {source_id}: {result.get('http', {})}")
+                
+                results.append(result)
+                
+            except Exception as e:
+                logger.error(f"Error processing {source} ID {source_id}: {e}", exc_info=True)
+                results.append({
+                    "_id": f"{source}_{source_id}",
+                    "source": source,
+                    "source_id": source_id,
+                    "status": "error",
+                    "http": {"error": str(e)}
+                })
+        
+    return results
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\pipeline_conservative.py ---
+import logging
+from typing import List, Dict, Optional
+from pymongo import MongoClient
+from src.extractors.mal import collect_mal, collect_mal_parallel
+from .extractors.anilist import collect_anilist
+from .extractors.animeplanet import collect_animeplanet
+from .extractors.mangaupdates import collect_mangaupdates
+from scrapy.crawler import CrawlerProcess
+from spiders.mal_manga_spider import MALMangaSpider
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# MongoDB connection
+MONGO_URI = "mongodb://localhost:27017"
+DB_NAME = "manga_raw_data"
+
+def get_mongo_collection(source: str):
+    client = MongoClient(MONGO_URI)
+    db = client[DB_NAME]
+    return db[f"{source}_data"]
+
+def run_mal_manga_crawl():
+    """Run MAL Manga Spider to crawl top manga list"""
+    logger.info("Starting MAL Manga Crawler Spider")
+    try:
+        process = CrawlerProcess()
+        process.crawl(MALMangaSpider)
+        process.start()
+        logger.info("MAL Manga Crawler completed")
+    except Exception as e:
+        logger.error(f"MAL Manga Crawler failed: {e}", exc_info=True)
+
+def run_conservative_pipeline(limit: int = 5, skip: int = 0, only: Optional[List[str]] = None) -> List[Dict]:
+    """Run the manga data pipeline for specified sources"""
+    results = []
+    sources = only if only else ["mal", "anilist", "mangaupdates", "animeplanet"]
+    
+    # Sample IDs for testing (replace with actual source, e.g., from DB or file)
+    sample_ids = {
+        "mal": [
+            # Top popular manga IDs
+            "1", "2", "11", "74", "988", "1706", "3438", "7519", "15578", "23390",
+            "30013", "44347", "85143", "100005", "101517", "103851", "104175", "106479", 
+            "108556", "109957", "110277", "111435", "112323", "113138", "114745", "115138",
+            "116778", "117195", "118586", "119161", "120906", "121496", "122663", "123456",
+            "124578", "125234", "126789", "127890", "128901", "129012", "130123", "131234",
+            "132345", "133456", "134567", "135678", "136789", "137890", "138901", "139012",
+            "140123", "141234", "142345", "143456", "144567"  # 55 IDs for testing
+        ],
+        "anilist": ["30001", "30002", "31706", "87216", "98448"],
+        "mangaupdates": ["1234", "5678", "9012", "3456", "7890"],
+        "animeplanet": ["naruto", "one-piece", "attack-on-titan", "berserk", "fullmetal-alchemist"]
+    }
+
+    for source in sources:
+        logger.info(f"Processing source: {source}")
+        collection = get_mongo_collection(source)
+        
+        ids_to_process = sample_ids.get(source, [])[skip:skip+limit]
+        
+        # Use parallel processing for MAL to speed up large batches
+        if source == "mal" and len(ids_to_process) > 5:
+            logger.info(f"Using parallel processing for {len(ids_to_process)} MAL manga")
+            try:
+                batch_results = collect_mal_parallel(ids_to_process, max_workers=4)
+                for result in batch_results:
+                    if result.get("status") in ["ok", "no_reviews"]:
+                        existing = collection.find_one({"_id": result["_id"]})
+                        if not existing:
+                            collection.insert_one(result)
+                            logger.info(f"Inserted {source} data for {result['source_id']}")
+                        else:
+                            logger.info(f"Skipped existing {source} data for {result['source_id']}")
+                    else:
+                        logger.warning(f"Failed to fetch {source} data for {result['source_id']}: {result.get('http', {})}")
+                    results.append(result)
+            except Exception as e:
+                logger.error(f"Parallel processing failed for {source}: {e}", exc_info=True)
+        else:
+            # Sequential processing for other sources or small batches
+            for source_id in ids_to_process:
+                try:
+                    logger.info(f"Fetching {source} data for ID: {source_id}")
+                    if source == "mal":
+                        result = collect_mal(source_id=source_id)
+                    elif source == "anilist":
+                        result = collect_anilist(source_id=source_id)
+                    elif source == "mangaupdates":
+                        result = collect_mangaupdates(source_id=source_id)
+                    elif source == "animeplanet":
+                        result = collect_animeplanet(source_id=source_id)
+                    else:
+                        logger.warning(f"Unknown source: {source}")
+                        continue
+                    
+                    if result.get("status") in ["ok", "no_reviews"]:
+                        existing = collection.find_one({"_id": result["_id"]})
+                        if not existing:
+                            collection.insert_one(result)
+                            logger.info(f"Inserted {source} data for {source_id}")
+                        else:
+                            logger.info(f"Skipped existing {source} data for {source_id}")
+                    else:
+                        logger.warning(f"Failed to fetch {source} data for {source_id}: {result.get('http', {})}")
+                    
+                    results.append(result)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing {source} ID {source_id}: {e}", exc_info=True)
+                    results.append({
+                        "_id": f"{source}_{source_id}",
+                        "source": source,
+                        "source_id": source_id,
+                        "status": "error",
+                        "http": {"error": str(e)}
+                    })
+        
+    return results
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\run.py ---
+import argparse
+import logging
+import sys
+import os
+
+# Fix Python path for relative imports
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'spiders'))
+
+from src.pipeline_conservative import run_conservative_pipeline as run_pipeline
+from src.pipeline import run_mal_ranking_based_crawl
+from scrapy.crawler import CrawlerProcess
+from mal_manga_spider import MALMangaSpider
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('manga_fetch.log')
+    ]
+)
+logger = logging.getLogger(__name__)
+
+def main():
+    parser = argparse.ArgumentParser(description="Manga Data Pipeline")
+    parser.add_argument("--limit", type=int, default=5, 
+                       help="Number of documents to process (default: 5)")
+    parser.add_argument("--skip", type=int, default=0, 
+                       help="Number of documents to skip")
+    parser.add_argument("--only", nargs="*", 
+                       choices=["mal", "anilist", "mangaupdates", "animeplanet"],
+                       help="Only run for specific sources")
+    parser.add_argument("--animeplanet-only", action="store_true",
+                       help="Only run anime-planet (shortcut)")
+    parser.add_argument("--mal-manga-crawl", action="store_true",
+                       help="Run MAL manga crawler spider to fetch top manga")
+    parser.add_argument("--mal-ranking-crawl", action="store_true",
+                       help="Run independent MAL ranking-based collection (like project_dump.txt)")
+    parser.add_argument("--mal-start-limit", type=int, default=0,
+                       help="Starting ranking limit for MAL collection (default: 0)")
+    parser.add_argument('--mal-max-pages', type=int, default=50, 
+                        help='Maximum number of ranking pages to process for MAL ranking crawl (0 = unlimited)')
+    parser.add_argument("--verbose", "-v", action="store_true",
+                       help="Enable verbose logging")
+    
+    args = parser.parse_args()
+
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+        logger.debug("Verbose logging enabled")
+
+    if args.animeplanet_only:
+        only_sources = ["animeplanet"]
+    else:
+        only_sources = args.only
+
+    if args.mal_manga_crawl:
+        logger.info("🚀 Starting MAL Manga Crawler Spider")
+        try:
+            process = CrawlerProcess()
+            process.crawl(MALMangaSpider)
+            process.start()
+        except Exception as e:
+            logger.error(f"Failed to run MAL Manga Spider: {e}", exc_info=True)
+    elif args.mal_ranking_crawl:
+        logger.info("🚀 Starting MAL Ranking-Based Collection (Independent Approach)")
+        logger.info(f"📋 Settings: start_limit={args.mal_start_limit}, max_pages={args.mal_max_pages}")
+        logger.warning("⚠️ This approach crawls MAL independently without external IDs")
+        logger.warning("⚠️ Expected time: ~1 object/second for 24h target")
+        try:
+            results = run_mal_ranking_based_crawl(args.mal_start_limit, args.mal_max_pages)
+            
+            print(f"\n{'='*80}")
+            print("📊 MAL RANKING-BASED COLLECTION RESULTS")
+            print(f"{'='*80}")
+            
+            success_count = 0
+            total_reviews = 0
+            total_recs = 0
+            
+            for result in results:
+                status = result.get("status", "unknown")
+                reviews = len(result.get("reviews", []))
+                recs = len(result.get("recommendations", []))
+                
+                if status in ["ok", "no_reviews"] or reviews > 0 or recs > 0:
+                    success_count += 1
+                    
+                total_reviews += reviews
+                total_recs += recs
+            
+            success_rate = (success_count / len(results)) * 100 if results else 0
+            print(f"📈 Success: {success_count}/{len(results)} ({success_rate:.1f}%)")
+            print(f"📊 Total: {total_reviews} reviews, {total_recs} recommendations")
+            print(f"🎉 Total manga processed: {len(results)}")
+            
+        except Exception as e:
+            logger.error(f"Failed to run MAL ranking-based collection: {e}", exc_info=True)
+    else:
+        logger.info(f"🚀 Starting manga data pipeline")
+        logger.info(f"📋 Settings: limit={args.limit}, skip={args.skip}, only={only_sources}")
+
+        if only_sources and "animeplanet" in only_sources:
+            logger.warning("⚠️ Running anime-planet - this will be SLOW but more reliable")
+            logger.warning("⚠️ Expected time: ~30-60 seconds per manga")
+
+        try:
+            results = run_pipeline(
+                limit=args.limit, 
+                skip=args.skip, 
+                only=only_sources
+            )
+            
+            print(f"\n{'='*80}")
+            print("📊 PIPELINE RESULTS")  
+            print(f"{'='*80}")
+            
+            by_source = {}
+            for result in results:
+                source = result.get("source", "unknown")
+                if source not in by_source:
+                    by_source[source] = []
+                by_source[source].append(result)
+            
+            for source, source_results in by_source.items():
+                print(f"\n🔹 {source.upper()}:")
+                
+                success_count = 0
+                total_reviews = 0
+                total_recs = 0
+                
+                for result in source_results:
+                    _id = result.get("_id", "unknown")
+                    status = result.get("status", "unknown")
+                    reviews = len(result.get("reviews", []))
+                    recs = len(result.get("recommendations", []))
+                    
+                    if status in ["ok", "no_reviews"] or reviews > 0 or recs > 0:
+                        success_count += 1
+                        
+                    total_reviews += reviews
+                    total_recs += recs
+                    
+                    emoji = "✅" if status == "ok" else "⚠️" if status == "no_reviews" else "❌" if status == "error" else "❓"
+                    print(f"  {emoji} {_id:25} | R:{reviews:3} | Rec:{recs:3} | {status}")
+                
+                success_rate = (success_count / len(source_results)) * 100 if source_results else 0
+                print(f"  📈 Success: {success_count}/{len(source_results)} ({success_rate:.1f}%)")
+                print(f"  📊 Total: {total_reviews} reviews, {total_recs} recommendations")
+            
+            print(f"\n🎉 Total results: {len(results)}")
+            
+            ap_results = by_source.get("animeplanet", [])
+            if ap_results:
+                print(f"\n{'='*40}")
+                print("🎯 ANIME-PLANET DETAILED ANALYSIS")
+                print(f"{'='*40}")
+                
+                working_count = 0
+                for result in ap_results:
+                    reviews = len(result.get("reviews", []))
+                    recs = len(result.get("recommendations", []))
+                    main = result.get("main", {})
+                    has_main = bool(main.get("title") or main.get("synopsis"))
+                    
+                    if reviews > 0 or recs > 0 or has_main:
+                        working_count += 1
+                        
+                    print(f"  {result.get('source_id', 'unknown'):20} | "
+                          f"Reviews:{reviews:3} | Recs:{recs:3} | "
+                          f"Main:{has_main} | Method:{result.get('method', 'unknown')}")
+                
+                print(f"\n  🎯 Anime-Planet working rate: {working_count}/{len(ap_results)} "
+                      f"({(working_count/len(ap_results)*100 if ap_results else 0):.1f}%)")
+        
+        except Exception as e:
+            logger.error(f"Pipeline failed: {e}", exc_info=True)
+            sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\scrapy_runner.py ---
+# src/scrapy_runner.py
+"""
+Optional helper: run a scrapy runspider script as a subprocess.
+Usage:
+    from src.scrapy_runner import run_scrapy_runspider
+    run_scrapy_runspider("spiders/animeplanet_spider.py", ["-a", "slug=tower-of-god"])
+"""
+
+import subprocess
+import shlex
+import os
+from typing import List, Tuple
+
+def run_scrapy_runspider(script_path: str, extra_args: List[str] = None, env: dict = None) -> Tuple[int, str, str]:
+    """
+    Run: scrapy runspider <script_path> <extra_args...>
+    Returns (returncode, stdout, stderr)
+    """
+    if extra_args is None:
+        extra_args = []
+    cmd = ["scrapy", "runspider", script_path] + extra_args
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env={**os.environ, **(env or {})})
+    out, err = proc.communicate()
+    return proc.returncode, out.decode("utf-8", errors="replace"), err.decode("utf-8", errors="replace")
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\utils.py ---
+import re
+import time
+import uuid
+from datetime import datetime, timezone
+
+def utc_now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+def is_digits(s: str) -> bool:
+    return bool(re.fullmatch(r"\d+", str(s).strip()))
+
+def new_trace_id():
+    return uuid.uuid4().hex
+
+def ms(start_ts):
+    return int((time.time() - start_ts) * 1000)
+=== Folder: src\common ===
+
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\common\anti_blocking.py ---
+# src/common/anti_blocking.py
+"""
+Advanced anti-blocking utilities for web scraping.
+Provides rotating proxies, user agents, intelligent delays, and session management.
+"""
+
+import os
+import time
+import random
+import logging
+from typing import List, Optional, Dict, Any
+from datetime import datetime, timedelta
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+logger = logging.getLogger(__name__)
+
+# Extended user agent pool with real browser fingerprints
+USER_AGENTS = [
+    # Chrome Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+    
+    # Chrome Mac
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    
+    # Firefox Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:119.0) Gecko/20100101 Firefox/119.0",
+    
+    # Safari Mac
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
+    
+    # Edge Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+    
+    # Mobile Chrome
+    "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
+]
+
+# Free proxy sources (you can extend this with paid proxy services)
+FREE_PROXY_APIS = [
+    "https://api.proxyscrape.com/v2/?request=get&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all",
+    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+]
+
+class ProxyRotator:
+    """Manages proxy rotation with health checking."""
+    
+    def __init__(self):
+        self.proxies: List[str] = []
+        self.working_proxies: List[str] = []
+        self.failed_proxies: set = set()
+        self.last_refresh = None
+        self.refresh_interval = timedelta(hours=1)
+        
+    def refresh_proxies(self):
+        """Fetch fresh proxy list from free sources."""
+        if self.last_refresh and datetime.now() - self.last_refresh < self.refresh_interval:
+            return
+            
+        logger.info("Refreshing proxy list...")
+        new_proxies = []
+        
+        for api_url in FREE_PROXY_APIS:
+            try:
+                resp = requests.get(api_url, timeout=10)
+                if resp.status_code == 200:
+                    proxies = resp.text.strip().split('\n')
+                    new_proxies.extend([p.strip() for p in proxies if ':' in p])
+            except Exception as e:
+                logger.warning(f"Failed to fetch proxies from {api_url}: {e}")
+                
+        # Remove duplicates and failed proxies
+        self.proxies = list(set(new_proxies) - self.failed_proxies)
+        self.working_proxies = self.proxies.copy()
+        self.last_refresh = datetime.now()
+        logger.info(f"Loaded {len(self.proxies)} proxies")
+        
+    def get_proxy(self) -> Optional[Dict[str, str]]:
+        """Get a working proxy, refresh list if needed."""
+        if not self.working_proxies:
+            self.refresh_proxies()
+            
+        if not self.working_proxies:
+            return None
+            
+        proxy_addr = random.choice(self.working_proxies)
+        return {
+            "http": f"http://{proxy_addr}",
+            "https": f"http://{proxy_addr}"
+        }
+        
+    def mark_proxy_failed(self, proxy_dict: Dict[str, str]):
+        """Mark a proxy as failed."""
+        if proxy_dict and "http" in proxy_dict:
+            proxy_addr = proxy_dict["http"].replace("http://", "")
+            self.failed_proxies.add(proxy_addr)
+            if proxy_addr in self.working_proxies:
+                self.working_proxies.remove(proxy_addr)
+
+class RequestManager:
+    """Manages intelligent request timing and session handling."""
+    
+    def __init__(self, base_delay: float = 5.0, max_delay: float = 60.0):
+        self.base_delay = base_delay
+        self.max_delay = max_delay
+        self.last_request_time = 0
+        self.consecutive_failures = 0
+        self.session = self._create_session()
+        self.proxy_rotator = ProxyRotator()
+        
+    def _create_session(self) -> requests.Session:
+        """Create session with retry strategy."""
+        session = requests.Session()
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["HEAD", "GET", "OPTIONS"]
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        return session
+        
+    def _calculate_delay(self) -> float:
+        """Calculate intelligent delay based on recent failures."""
+        base = self.base_delay
+        
+        # Exponential backoff for consecutive failures
+        if self.consecutive_failures > 0:
+            base *= (2 ** min(self.consecutive_failures, 5))
+            
+        # Add random jitter (±25%)
+        jitter = random.uniform(0.75, 1.25)
+        delay = min(base * jitter, self.max_delay)
+        
+        # Add extra random delay (0-10 seconds)
+        delay += random.uniform(0, 10)
+        
+        return delay
+        
+    def _get_headers(self) -> Dict[str, str]:
+        """Generate realistic headers with random user agent."""
+        ua = random.choice(USER_AGENTS)
+        
+        # Common browser headers that match the user agent
+        headers = {
+            "User-Agent": ua,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9,vi;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "DNT": "1",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Cache-Control": "max-age=0",
+        }
+        
+        # Randomly add some optional headers
+        if random.random() < 0.5:
+            headers["Referer"] = random.choice([
+                "https://www.google.com/",
+                "https://www.bing.com/",
+                "https://duckduckgo.com/",
+                "https://www.anime-planet.com/"
+            ])
+            
+        return headers
+        
+    def make_request(self, url: str, use_proxy: bool = True, max_retries: int = 3) -> Optional[requests.Response]:
+        """Make a request with intelligent timing and anti-blocking measures."""
+        
+        # Wait for appropriate delay
+        current_time = time.time()
+        time_since_last = current_time - self.last_request_time
+        delay = self._calculate_delay()
+        
+        if time_since_last < delay:
+            sleep_time = delay - time_since_last
+            logger.info(f"Waiting {sleep_time:.1f}s before next request...")
+            time.sleep(sleep_time)
+            
+        self.last_request_time = time.time()
+        
+        for attempt in range(max_retries):
+            try:
+                headers = self._get_headers()
+                proxies = None
+                
+                if use_proxy and random.random() < 0.7:  # Use proxy 70% of the time
+                    proxies = self.proxy_rotator.get_proxy()
+                    if proxies:
+                        logger.debug(f"Using proxy: {proxies['http']}")
+                
+                resp = self.session.get(
+                    url, 
+                    headers=headers, 
+                    proxies=proxies,
+                    timeout=30,
+                    allow_redirects=True
+                )
+                
+                if resp.status_code == 200:
+                    self.consecutive_failures = 0
+                    logger.info(f"✓ Success: {url} (status: {resp.status_code})")
+                    return resp
+                    
+                elif resp.status_code == 403:
+                    logger.warning(f"✗ Blocked (403): {url} - attempt {attempt + 1}")
+                    if proxies:
+                        self.proxy_rotator.mark_proxy_failed(proxies)
+                    self.consecutive_failures += 1
+                    
+                    # Longer delay after 403
+                    if attempt < max_retries - 1:
+                        backoff_delay = (2 ** attempt) * 10 + random.uniform(5, 15)
+                        logger.info(f"Backing off for {backoff_delay:.1f}s after 403...")
+                        time.sleep(backoff_delay)
+                        
+                elif resp.status_code == 429:
+                    logger.warning(f"✗ Rate limited (429): {url}")
+                    self.consecutive_failures += 1
+                    
+                    # Extract retry-after header if present
+                    retry_after = resp.headers.get('Retry-After')
+                    if retry_after:
+                        try:
+                            delay = int(retry_after) + random.uniform(5, 15)
+                        except ValueError:
+                            delay = 60 + random.uniform(10, 30)
+                    else:
+                        delay = 60 + random.uniform(10, 30)
+                        
+                    if attempt < max_retries - 1:
+                        logger.info(f"Rate limited, waiting {delay:.1f}s...")
+                        time.sleep(delay)
+                        
+                else:
+                    logger.warning(f"✗ HTTP {resp.status_code}: {url}")
+                    self.consecutive_failures += 1
+                    
+            except requests.exceptions.ProxyError as e:
+                logger.warning(f"Proxy error: {e}")
+                if proxies:
+                    self.proxy_rotator.mark_proxy_failed(proxies)
+                    
+            except requests.exceptions.Timeout as e:
+                logger.warning(f"Timeout: {e}")
+                
+            except Exception as e:
+                logger.error(f"Request error: {e}")
+                
+            # Wait before retry
+            if attempt < max_retries - 1:
+                retry_delay = (2 ** attempt) * 5 + random.uniform(2, 8)
+                time.sleep(retry_delay)
+                
+        self.consecutive_failures += 1
+        logger.error(f"✗ Failed all {max_retries} attempts for {url}")
+        return None
+
+# Global instance
+request_manager = RequestManager()
+
+def get_request_manager() -> RequestManager:
+    """Get the global request manager instance."""
+    return request_manager
+
+def smart_delay(min_delay: float = 5.0, max_delay: float = 30.0):
+    """Add intelligent random delay between requests."""
+    delay = random.uniform(min_delay, max_delay)
+    
+    # Add extra delay during peak hours (assuming UTC)
+    current_hour = datetime.utcnow().hour
+    if 8 <= current_hour <= 22:  # Peak hours
+        delay *= random.uniform(1.2, 1.8)
+        
+    logger.debug(f"Smart delay: {delay:.1f}s")
+    time.sleep(delay)
+
+def get_random_headers() -> Dict[str, str]:
+    """Generate realistic browser headers."""
+    ua = random.choice(USER_AGENTS)
+    
+    headers = {
+        "User-Agent": ua,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": random.choice([
+            "en-US,en;q=0.9",
+            "en-US,en;q=0.9,vi;q=0.8",
+            "en-GB,en;q=0.9",
+        ]),
+        "Accept-Encoding": "gzip, deflate, br",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+    }
+    
+    # Randomly add referer
+    if random.random() < 0.6:
+        headers["Referer"] = random.choice([
+            "https://www.google.com/",
+            "https://www.bing.com/",
+            "https://duckduckgo.com/",
+            "https://www.anime-planet.com/",
+            "https://myanimelist.net/",
+        ])
+        
+    return headers
+
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\common\config.py ---
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Database settings
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+MONGO_DB = os.getenv("MONGO_DB", "manga_raw_data")
+MONGODX_COLLECTION = os.getenv("MONGODX_COLLECTION", "mangadx_manga")
+
+# API endpoints
+ANI_API_ENDPOINT = os.getenv("ANI_API_ENDPOINT", "https://graphql.anilist.co")
+MAL_CLIENT_ID = os.getenv("MAL_CLIENT_ID", "6114d00ca681b7701d1e15fe11a4987e")  # Default public client ID
+MU_API_BASE = os.getenv("MU_API_BASE", "https://api.mangaupdates.com/v1")
+
+# Proxy settings: Load from proxy_ip.txt
+PROXY_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../proxy_ip.txt"))
+HTTP_PROXY = []
+
+try:
+    if os.path.exists(PROXY_FILE):
+        with open(PROXY_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                proxy = line.strip()
+                if proxy:
+                    # Ensure proxy has http:// prefix
+                    if not proxy.startswith(("http://", "https://")):
+                        proxy = f"http://{proxy}"
+                    HTTP_PROXY.append(proxy)
+    else:
+        print(f"Warning: Proxy file {PROXY_FILE} not found, no proxies will be used.")
+except Exception as e:
+    print(f"Error reading proxy file {PROXY_FILE}: {e}")
+
+# Fallback proxies if file is empty or fails
+if not HTTP_PROXY:
+    HTTP_PROXY = [
+        "http://45.79.139.169:80",
+        "http://104.236.195.251:80",
+        "http://159.65.0.132:80",
+    ]
+
+HTTPS_PROXY = os.getenv("HTTPS_PROXY", None)
+
+# Data lake path
+DATA_LAKE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../data-lake/raw"))
+
+# Anti-blocking configuration
+ANTI_BLOCKING_CONFIG = {
+    # Base delays (seconds)
+    "MIN_DELAY": float(os.getenv("MIN_DELAY", "10")),
+    "MAX_DELAY": float(os.getenv("MAX_DELAY", "30")),
+    "REVIEW_DELAY_MIN": float(os.getenv("REVIEW_DELAY_MIN", "8")),
+    "REVIEW_DELAY_MAX": float(os.getenv("REVIEW_DELAY_MAX", "20")),
+    
+    # Retry configuration
+    "MAX_RETRIES": int(os.getenv("MAX_RETRIES", "5")),
+    "BACKOFF_MULTIPLIER": float(os.getenv("BACKOFF_MULTIPLIER", "2.0")),
+    "BACKOFF_MAX": float(os.getenv("BACKOFF_MAX", "300")),  # 5 minutes max
+    
+    # Request timeout
+    "REQUEST_TIMEOUT": float(os.getenv("REQUEST_TIMEOUT", "30")),
+    
+    # Use proxies (enabled since we have proxy_ip.txt)
+    "USE_PROXIES": os.getenv("USE_PROXIES", "true").lower() == "true",
+    
+    # Conservative mode (longer delays, fewer retries)
+    "CONSERVATIVE_MODE": os.getenv("CONSERVATIVE_MODE", "true").lower() == "true",
+}
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\common\db.py ---
+from pymongo import MongoClient
+from .config import MONGO_URI, MONGO_DB, MONGODEX_COLLECTION
+
+def get_db():
+    client = MongoClient(MONGO_URI)
+    return client[MONGO_DB]
+
+def iter_mangadex_docs(limit=None):
+    db = get_db()
+    proj = {
+        "_id": 1,
+        "id": 1,
+        "attributes.title": 1,
+        "attributes.links": 1
+    }
+    cur = db[MONGODEX_COLLECTION].find({"attributes.links": {"$exists": True}}, proj)
+    if limit:
+        cur = cur.limit(int(limit))
+    for doc in cur:
+        yield doc
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\common\http.py ---
+import aiohttp, asyncio
+from aiolimiter import AsyncLimiter
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+class HttpClient:
+    def __init__(self, rate_per_sec=2, headers=None, proxy=None):
+        self.limiter = AsyncLimiter(rate_per_sec, 1)
+        self.session = None
+        self.headers = headers or {}
+        self.proxy = proxy
+
+    async def __aenter__(self):
+        self.session = aiohttp.ClientSession(headers=self.headers, trust_env=True)
+        return self
+
+    async def __aexit__(self, *args):
+        await self.session.close()
+
+    @retry(stop=stop_after_attempt(5), wait=wait_exponential(min=1, max=30))
+    async def get_json(self, url, **kw):
+        async with self.limiter:
+            async with self.session.get(url, proxy=self.proxy, **kw) as r:
+                txt = await r.text()
+                return r.status, txt, (await r.json(content_type=None))
+
+    @retry(stop=stop_after_attempt(5), wait=wait_exponential(min=1, max=30))
+    async def post_json(self, url, json=None, **kw):
+        async with self.limiter:
+            async with self.session.post(url, json=json, proxy=self.proxy, **kw) as r:
+                txt = await r.text()
+                return r.status, txt, (await r.json(content_type=None))
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\common\io.py ---
+import os, gzip, json, datetime, hashlib
+
+from .config import DATA_LAKE_ROOT
+
+def _date_parts(dt=None):
+    if not dt:
+        dt = datetime.datetime.utcnow()
+    return dt.strftime("%Y"), dt.strftime("%m"), dt.strftime("%d"), dt
+
+def _safe_name(key: str):
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()
+    return digest
+
+def write_jsonl(source: str, key: str, envelope: dict):
+    y, m, d, now = _date_parts()
+    out_dir = os.path.join(DATA_LAKE_ROOT, source, f"YYYY={y}", f"MM={m}", f"DD={d}")
+    os.makedirs(out_dir, exist_ok=True)
+    fname = f"{_safe_name(key)}.jsonl.gz"
+    path = os.path.join(out_dir, fname)
+    line = json.dumps(envelope, ensure_ascii=False) + "\n"
+    with gzip.open(path, "at", encoding="utf-8") as f:
+        f.write(line)
+    return path
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\common\util.py ---
+
+=== Folder: src\extractors ===
+
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\extractors\anilist.py ---
+import logging
+from .anilist_fetcher import get_full_data, get_full_data_parallel
+from typing import List
+
+logger = logging.getLogger(__name__)
+
+def collect_anilist(mangadx_id: str, source_id: str):
+    """
+    Collector entrypoint for AniList.
+    - source_id: AniList numeric id
+    """
+    try:
+        payload = get_full_data(source_id)
+        payload.setdefault("_id", f"anilist_{source_id}")
+        payload.setdefault("source", "anilist")
+        payload.setdefault("source_id", source_id)
+        return payload
+    except Exception as e:
+        logger.error("collect_anilist failed for %s: %s", source_id, e, exc_info=True)
+        return {
+            "_id": f"anilist_{source_id}",
+            "source": "anilist",
+            "source_id": source_id,
+            "reviews": [],
+            "recommendations": [],
+            "status": "error",
+            "http": {"error": str(e)},
+        }
+
+def collect_anilist_batch(manga_ids: List[str], use_parallel: bool = True):
+    """
+    High-performance batch collector for 87k objects in 24h
+    - manga_ids: List of AniList IDs
+    - use_parallel: Enable parallel processing (3 workers)
+    """
+    try:
+        if use_parallel and len(manga_ids) > 50:
+            return get_full_data_parallel(manga_ids, max_workers=3)
+        else:
+            return get_full_data(manga_ids)
+    except Exception as e:
+        logger.error("collect_anilist_batch failed: %s", e, exc_info=True)
+        return []
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\extractors\anilist_fetcher.py ---
+import logging
+from datetime import datetime
+from typing import Dict, List
+import requests
+import random
+import time
+import asyncio
+import aiohttp
+from concurrent.futures import ThreadPoolExecutor
+from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
+import requests.exceptions
+# from ..common.config import ANTI_BLOCKING_CONFIG  # Removed problematic import
+
+logger = logging.getLogger(__name__)
+
+ANILIST_API = "https://graphql.anilist.co"
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+]
+
+# Configuration cho 87k objects trong 24h
+TARGET_OBJECTS_PER_HOUR = 87000 / 24  # ~3625 objects/hour
+TARGET_REQUESTS_PER_HOUR = TARGET_OBJECTS_PER_HOUR / 10  # ~362 requests/hour với batch size 10
+SECONDS_PER_REQUEST = 3600 / TARGET_REQUESTS_PER_HOUR  # ~10 giây/request
+
+@retry(
+    retry=retry_if_exception_type((requests.exceptions.HTTPError, requests.exceptions.RequestException)),
+    wait=wait_exponential(multiplier=1.2, min=5, max=60),  # Aggressive: min 5s, max 1 phút
+    stop=stop_after_attempt(3),
+    reraise=True
+)
+def _query_anilist_batch(manga_ids: List[str]) -> List[Dict]:
+    """Query AniList API with aggressive rate limiting to avoid 429 errors"""
+    query = """
+    query ($ids: [Int]) {
+      Page {
+        media(id_in: $ids, type: MANGA) {
+          id
+          title { romaji english native }
+          recommendations { edges { node { mediaRecommendation { id title { romaji } } } } }
+          reviews { nodes { summary body } }
+        }
+      }
+    }
+    """
+    variables = {"ids": [int(id) for id in manga_ids]}
+    headers = {
+        "User-Agent": random.choice(USER_AGENTS),
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    # Minimal delay cho 24h target - chỉ 2-5s
+    delay = random.uniform(2, 5)
+    logger.info(f"Pre-request delay: {delay:.1f}s")
+    time.sleep(delay)
+    
+    try:
+        r = requests.post(ANILIST_API, json={"query": query, "variables": variables}, headers=headers, timeout=30)
+        
+        # Kiểm tra rate limit headers
+        remaining = int(r.headers.get("X-RateLimit-Remaining", 90))
+        reset_time = int(r.headers.get("X-RateLimit-Reset", 60))
+        
+        logger.info(f"Rate limit remaining: {remaining}, reset in: {reset_time}s")
+        
+        # Minimal rate limiting cho 24h target
+        if remaining < 5:  # Chỉ sleep khi rất ít quota
+            delay = random.uniform(10, 20)  # Chỉ 10-20s
+            logger.warning(f"Very low rate limit ({remaining}), sleeping {delay:.1f}s")
+            time.sleep(delay)
+        elif remaining < 15:
+            time.sleep(random.uniform(2, 5))  # Delay rất nhẹ
+        
+        r.raise_for_status()
+        
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 429:
+            # 429 handling cho 24h target
+            retry_after = int(e.response.headers.get("Retry-After", 60))  # Default 1 phút
+            buffer = random.uniform(5, 15)  # Minimal buffer
+            total_wait = retry_after + buffer
+            logger.error(f"Rate limited! Waiting {total_wait:.1f}s before retry")
+            time.sleep(total_wait)
+        raise
+    return r.json()["data"]["Page"]["media"]
+
+def get_full_data_parallel(al_id: str | List[str], max_workers: int = 3) -> List[Dict]:
+    """Parallel version for high-volume processing"""
+    if isinstance(al_id, str):
+        al_id = [al_id]
+    
+    # Chia thành chunks cho parallel processing
+    chunk_size = len(al_id) // max_workers if len(al_id) > max_workers else len(al_id)
+    chunks = [al_id[i:i+chunk_size] for i in range(0, len(al_id), chunk_size)]
+    
+    all_payloads = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(get_full_data, chunk) for chunk in chunks]
+        for future in futures:
+            all_payloads.extend(future.result())
+    
+    return all_payloads
+
+def get_full_data(al_id: str | List[str]) -> List[Dict]:
+    if isinstance(al_id, str):
+        al_id = [al_id]  # Convert single ID to list for consistency
+    
+    payloads = []
+    for i in range(0, len(al_id), 10):  # Tăng batch size lên 10 cho 24h target
+        batch_ids = al_id[i:i+10]
+        
+        # Minimal batch delay cho 24h target
+        if i > 0:
+            batch_delay = random.uniform(5, 8)  # Chỉ 5-8s giữa các batch
+            logger.info(f"Waiting {batch_delay:.1f}s before next batch...")
+            time.sleep(batch_delay)
+        try:
+            media_list = _query_anilist_batch(batch_ids)
+            for media in media_list:
+                al_id_str = str(media["id"])
+                payload = {
+                    "_id": f"anilist_{al_id_str}",
+                    "source": "anilist",
+                    "source_id": al_id_str,
+                    "source_url": f"https://anilist.co/manga/{al_id_str}",
+                    "fetched_at": datetime.utcnow().isoformat(),
+                }
+                recs = [{"id": str(edge["node"]["mediaRecommendation"]["id"]),
+                        "title": edge["node"]["mediaRecommendation"]["title"]["romaji"]}
+                       for edge in media["recommendations"]["edges"] if edge["node"]["mediaRecommendation"]]
+                reviews = [{"text": r.get("summary") or r.get("body")}
+                          for r in media["reviews"]["nodes"] if (r.get("summary") or r.get("body"))]
+                payload["recommendations"] = recs
+                payload["reviews"] = reviews
+                payload["status"] = "ok" if (reviews or recs) else "no_reviews"
+                payload["http"] = {"code": 200}
+                payloads.append(payload)
+        except Exception as e:
+            logger.error("AniList batch fetch failed for IDs %s: %s", batch_ids, e, exc_info=True)
+            for bid in batch_ids:
+                payloads.append({
+                    "_id": f"anilist_{bid}",
+                    "source": "anilist",
+                    "source_id": bid,
+                    "source_url": f"https://anilist.co/manga/{bid}",
+                    "fetched_at": datetime.utcnow().isoformat(),
+                    "recommendations": [],
+                    "reviews": [],
+                    "status": "error",
+                    "http": {"error": str(e)}
+                })
+    
+    return payloads
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\extractors\animeplanet.py ---
+import logging
+from .animeplanet_fetcher import get_full_data
+
+logger = logging.getLogger(__name__)
+
+def collect_animeplanet(mangadex_id: str, source_id: str):
+    """
+    Collector entrypoint for Anime-Planet.
+    - mangadex_id: MangaDex document id
+    - source_id: slug of anime-planet manga (e.g. "naruto")
+    """
+    try:
+        payload = get_full_data(source_id)
+        payload.setdefault("_id", f"ap_{source_id}")
+        payload.setdefault("source", "animeplanet")
+        payload.setdefault("source_id", source_id)
+        return payload
+    except Exception as e:
+        logger.error("collect_animeplanet failed for %s: %s", source_id, e, exc_info=True)
+        return {
+            "_id": f"ap_{source_id}",
+            "source": "animeplanet",
+            "source_id": source_id,
+            "reviews": [],
+            "recommendations": [],
+            "status": "error",
+            "http": {"error": str(e)},
+        }
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\extractors\animeplanet_fetcher.py ---
+import asyncio
+import logging
+import subprocess
+import sys
+from datetime import datetime
+from typing import Dict, List, Optional
+
+from bs4 import BeautifulSoup
+
+from src.scrapy_runner import run_scrapy_runspider
+from src.db import get_collection
+
+logger = logging.getLogger(__name__)
+
+ANIMEPLANET_BASE = "https://www.anime-planet.com"
+
+
+# ---------------- Playwright Setup ----------------
+def _ensure_playwright_browsers_installed() -> bool:
+    try:
+        subprocess.run([sys.executable, "-m", "playwright", "--version"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        return True
+    except Exception as e:
+        logger.warning("Playwright install failed: %s", e)
+        return False
+
+
+async def _fetch_with_playwright(url: str, timeout_ms: int = 45000) -> Optional[str]:
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        logger.error("Playwright not installed")
+        return None
+
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
+            context = await browser.new_context(
+                user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"),
+                locale="en-US"
+            )
+            page = await context.new_page()
+            await page.goto(url, timeout=timeout_ms)
+            await page.wait_for_selector("body", timeout=8000)
+            html = await page.content()
+            await browser.close()
+            return html
+    except Exception as e:
+        logger.error("Playwright fetch failed for %s: %s", url, e)
+        return None
+
+
+def _run_scrapy_and_read(slug: str) -> Optional[Dict]:
+    rc, out, err = run_scrapy_runspider("spiders/animeplanet_spider.py", ["-a", f"slug={slug}"])
+    logger.info("Scrapy fallback rc=%s", rc)
+    try:
+        col = get_collection("manga_raw_data", "animeplanet_data")
+        return col.find_one({"_id": f"ap_{slug}"})
+    except Exception as e:
+        logger.error("Scrapy fallback read failed: %s", e)
+        return None
+
+
+# ---------------- Parsers ----------------
+def _parse_main(html: str) -> Dict:
+    soup = BeautifulSoup(html, "lxml")
+    title = soup.select_one("h1")
+    title = title.get_text(strip=True) if title else None
+
+    synopsis = ""
+    s_node = soup.select_one("div.synopsis p")
+    if s_node:
+        synopsis = s_node.get_text(" ", strip=True)
+
+    rating = None
+    rc = soup.select_one("div.avgRating, span[itemprop='ratingValue']")
+    if rc:
+        rating = rc.get_text(strip=True)
+
+    img = None
+    og_img = soup.select_one("meta[property='og:image']")
+    if og_img:
+        img = og_img.get("content")
+
+    authors = [a.get_text(strip=True) for a in soup.select("a[href*='/people/']")]
+    genres = [g.get_text(strip=True) for g in soup.select("a[href*='/manga/genres/']")]
+
+    return {
+        "title": title,
+        "synopsis": synopsis,
+        "rating": rating,
+        "image": img,
+        "authors": list(dict.fromkeys(authors)),
+        "genres": list(dict.fromkeys(genres)),
+    }
+
+
+def _parse_reviews(html: str) -> List[Dict]:
+    soup = BeautifulSoup(html, "lxml")
+    reviews = []
+    for div in soup.select(".reviewText, .user-review, article.review"):
+        text = div.get_text(" ", strip=True)
+        if text:
+            reviews.append({"text": text})
+    return reviews
+
+
+def _parse_recommendations(html: str) -> List[Dict]:
+    soup = BeautifulSoup(html, "lxml")
+    recs = []
+    for a in soup.select("a[href*='/manga/']"):
+        href = a.get("href", "")
+        if "/manga/" in href:
+            slug = href.split("/manga/")[-1].split("?")[0].strip("/")
+            recs.append({"slug": slug, "url": ANIMEPLANET_BASE + href})
+    return list({r["slug"]: r for r in recs}.values())
+
+
+# ---------------- Public API ----------------
+def get_full_data(slug: str) -> Dict:
+    payload = {
+        "_id": f"ap_{slug}",
+        "source": "animeplanet",
+        "source_id": slug,
+        "source_url": f"{ANIMEPLANET_BASE}/manga/{slug}",
+        "fetched_at": datetime.utcnow().isoformat(),
+    }
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    try:
+        html_main = loop.run_until_complete(
+            _fetch_with_playwright(f"{ANIMEPLANET_BASE}/manga/{slug}")
+        )
+        html_reviews = loop.run_until_complete(
+            _fetch_with_playwright(f"{ANIMEPLANET_BASE}/manga/{slug}/reviews")
+        )
+        html_recs = loop.run_until_complete(
+            _fetch_with_playwright(f"{ANIMEPLANET_BASE}/manga/{slug}/recommendations")
+        )
+    finally:
+        loop.close()
+
+    if html_main:
+        payload["main"] = _parse_main(html_main)
+    else:
+        payload["main"] = {}
+
+    payload["reviews"] = _parse_reviews(html_reviews) if html_reviews else []
+    payload["recommendations"] = _parse_recommendations(html_recs) if html_recs else []
+
+    payload["http"] = {"code": 200 if html_main else 500}
+    payload["status"] = "ok" if (payload["reviews"] or payload["recommendations"]) else "no_reviews"
+
+    if not html_main and not html_reviews and not html_recs:
+        logger.info("Playwright failed, trying Scrapy fallback for %s", slug)
+        doc = _run_scrapy_and_read(slug)
+        if doc:
+            return doc
+        payload.update({"http": {"error": "could_not_fetch"}, "status": "error"})
+
+    return payload
+
+
+def get_reviews(slug: str) -> List[Dict]:
+    return get_full_data(slug).get("reviews", [])
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\extractors\animeplanet_fetcher_enhanced.py ---
+# src/extractors/animeplanet_fetcher_enhanced.py
+import asyncio
+import logging
+import random
+import subprocess
+import sys
+import time
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
+
+from bs4 import BeautifulSoup
+
+# Try to import cloudscraper if available; if not, we'll fallback to requests and Playwright.
+try:
+    import cloudscraper  # type: ignore
+except Exception:
+    cloudscraper = None  # type: ignore
+
+# Local project fallbacks (scrapy spider, mongo read) kept for compatibility
+try:
+    from src.scrapy_runner import run_scrapy_runspider
+    from src.db import get_collection
+except Exception:
+    # Allow imports to fail in editors that don't have project path; runtime will have them.
+    run_scrapy_runspider = None  # type: ignore
+    get_collection = None  # type: ignore
+
+logger = logging.getLogger(__name__)
+
+ANIMEPLANET_BASE = "https://www.anime-planet.com"
+DEFAULT_HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+
+USER_AGENTS = [
+    # a small list, rotated per-request
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+]
+
+
+def _make_cloudscraper_session():
+    """
+    Return a cloudscraper session if available, else None.
+    """
+    if cloudscraper is None:
+        return None
+    try:
+        # cloudscraper.create_scraper() will try to handle CF anti-bot,
+        # but may not handle Turnstile challenges.
+        s = cloudscraper.create_scraper(browser={
+            "browser": "chrome",
+            "platform": "windows",
+            "mobile": False
+        })
+        return s
+    except Exception as e:
+        logger.debug("Could not create cloudscraper session: %s", e)
+        return None
+
+
+def _is_challenge_html(text: str, status_code: Optional[int] = None) -> bool:
+    """
+    Heuristics to detect Cloudflare/Turnstile or other challenge pages.
+    """
+    if status_code == 403:
+        return True
+    low = (text or "").lower()
+    challenge_signs = [
+        "verifying you are human",
+        "just a moment",
+        "cdn-cgi/challenge-platform",
+        "__cf_chl_tk",
+        "turnstile",
+        "cf_chl_",
+        "ray id:",
+        "challenge-platform",
+    ]
+    for s in challenge_signs:
+        if s in low:
+            return True
+    return False
+
+
+def _ensure_playwright_browsers_installed() -> bool:
+    """
+    Attempt to run: python -m playwright install chromium
+    Returns True if the subprocess ran without crashing (idempotent).
+    """
+    try:
+        cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
+        subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+        return True
+    except Exception as e:
+        logger.debug("playwright install attempt failed: %s", e)
+        return False
+
+
+async def _fetch_with_playwright_url(url: str, timeout_ms: int = 45000) -> Optional[str]:
+    """
+    Async fetch using Playwright. Tries chromium, firefox, webkit.
+    Returns HTML or None.
+    """
+    try:
+        from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError  # type: ignore
+    except Exception as e:
+        logger.debug("playwright not importable: %s", e)
+        return None
+
+    browser_order = ["chromium", "firefox", "webkit"]
+    # try twice: first normally, if missing executable -> try to install then retry
+    for attempt in range(2):
+        for engine in browser_order:
+            try:
+                async with async_playwright() as p:
+                    browser_type = getattr(p, engine)
+                    try:
+                        browser = await browser_type.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+                    except Exception as le:
+                        msg = str(le).lower()
+                        # if missing executables detected, break to install
+                        if ("executable doesn't exist" in msg or "could not find" in msg or "no such file or directory" in msg):
+                            logger.warning("Playwright executable missing for %s: %s", engine, le)
+                            raise le
+                        logger.debug("playwright launch error for %s: %s", engine, le)
+                        raise le
+
+                    ctx = await browser.new_context(user_agent=random.choice(USER_AGENTS), locale="en-US")
+                    page = await ctx.new_page()
+                    logger.debug("Playwright navigating to %s (engine=%s)", url, engine)
+                    await page.goto(url, timeout=timeout_ms)
+                    # Wait a bit for JS and network idle; tolerant to timeout
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=8000)
+                    except PlaywrightTimeoutError:
+                        pass
+                    try:
+                        html = await page.content()
+                    finally:
+                        try:
+                            await browser.close()
+                        except Exception:
+                            pass
+                    return html
+            except Exception as e:
+                logger.debug("playwright engine %s failed on attempt %d: %s", engine, attempt, e)
+                # if this looks like missing executable -> attempt install & retry outer loop
+                if attempt == 0:
+                    # try install once
+                    installed = _ensure_playwright_browsers_installed()
+                    if installed:
+                        logger.info("Attempted playwright install; retrying playwright fetch.")
+                        # small pause to allow files to settle
+                        await asyncio.sleep(0.5)
+                        continue
+                await asyncio.sleep(0.1)
+                continue
+    logger.debug("All playwright attempts failed for url %s", url)
+    return None
+
+
+def _parse_main_and_recommendations(html: str) -> Dict:
+    """
+    Parse main metadata and recommendations from the overview page HTML.
+    Returns dict with keys: title, synopsis, rating, image, authors, genres, recommendations (list of {slug,url})
+    """
+    soup = BeautifulSoup(html, "lxml")
+    # title
+    title = None
+    h1 = soup.select_one("h1")
+    if h1:
+        title = h1.get_text(strip=True)
+    else:
+        meta = soup.select_one("meta[property='og:title'], meta[name='title']")
+        if meta:
+            title = meta.get("content")
+    # synopsis
+    synopsis = ""
+    s_node = soup.select_one("div.synopsis p")
+    if s_node:
+        synopsis = s_node.get_text(" ", strip=True)
+    else:
+        meta_desc = soup.select_one("meta[name='description']")
+        if meta_desc:
+            synopsis = meta_desc.get("content", "")
+    # rating
+    rating = None
+    rc = soup.select_one("div.avgRating, div.rating, span.score")
+    if rc:
+        rating = rc.get_text(strip=True)
+    else:
+        meta_rating = soup.select_one("meta[itemprop='ratingValue']")
+        if meta_rating:
+            rating = meta_rating.get("content")
+    # image
+    img = None
+    og_img = soup.select_one("meta[property='og:image']")
+    if og_img:
+        img = og_img.get("content")
+    else:
+        imgnode = soup.select_one("img.media-object, img.seriesImage")
+        if imgnode:
+            img = imgnode.get("src")
+    # authors
+    authors = []
+    for a in soup.select("a[href*='/people/'], a[href*='/manga/author']"):
+        t = a.get_text(strip=True)
+        if t:
+            authors.append(t)
+    authors = list(dict.fromkeys(authors))
+    # genres
+    genres = []
+    for g in soup.select("a[href*='/genres/'], a[href*='/manga/genre']"):
+        t = g.get_text(strip=True)
+        if t:
+            genres.append(t)
+    genres = list(dict.fromkeys(genres))
+    # recommendations: look first for dedicated blocks, else scan anchors
+    recs = []
+    for blk in soup.select("section, div"):
+        snippet = " ".join(blk.get_text(" ", strip=True).split()[:30]).lower()
+        if any(k in snippet for k in ("recommend", "recommendations", "you might like", "similar")):
+            for a in blk.select("a[href*='/manga/']"):
+                href = a.get("href", "").strip()
+                if not href:
+                    continue
+                href_full = (ANIMEPLANET_BASE + href) if href.startswith("/") else href
+                if "/manga/" in href_full:
+                    slug = href_full.split("/manga/")[-1].split("?")[0].split("#")[0].strip("/")
+                    if slug:
+                        recs.append({"slug": slug, "url": href_full})
+            if recs:
+                break
+    if not recs:
+        seen = set()
+        out = []
+        for a in soup.select("a[href*='/manga/']"):
+            href = a.get("href", "").strip()
+            if not href:
+                continue
+            href_full = (ANIMEPLANET_BASE + href) if href.startswith("/") else href
+            if "/manga/" in href_full:
+                slug = href_full.split("/manga/")[-1].split("?")[0].split("#")[0].strip("/")
+                if slug and slug not in seen:
+                    seen.add(slug)
+                    out.append({"slug": slug, "url": href_full})
+            if len(out) >= 50:
+                break
+        recs = out
+    return {
+        "title": title,
+        "synopsis": synopsis,
+        "rating": rating,
+        "image": img,
+        "authors": authors,
+        "genres": genres,
+        "recommendations": recs,
+    }
+
+
+def _parse_reviews(html: str) -> List[Dict]:
+    """
+    Parse reviews from reviews page HTML.
+    """
+    soup = BeautifulSoup(html, "lxml")
+    reviews = []
+    for div in soup.select(".reviewText, .user-review, article.review, .review"):
+        text = div.get_text(" ", strip=True)
+        if text:
+            reviews.append({"text": text})
+    if not reviews:
+        for li in soup.select("li.review, li.comment"):
+            text = li.get_text(" ", strip=True)
+            if text:
+                reviews.append({"text": text})
+    return reviews
+
+
+def _run_scrapy_and_read(slug: str) -> Optional[Dict]:
+    """
+    Optional fallback: run a scrapy runspider for animeplanet spider (if available)
+    and then read the result from Mongo. Works only if project includes spider and Mongo.
+    """
+    if run_scrapy_runspider is None or get_collection is None:
+        return None
+    try:
+        rc, out, err = run_scrapy_runspider("spiders/animeplanet_spider.py", ["-a", f"slug={slug}"])
+        logger.info("Scrapy runspider rc=%s stdout_len=%d stderr_len=%d", rc, len(out or ""), len(err or ""))
+        col = get_collection("manga_raw_data", "animeplanet_data")
+        doc = col.find_one({"_id": f"ap_{slug}"})
+        return doc
+    except Exception as e:
+        logger.exception("Scrapy fallback failed: %s", e)
+        return None
+
+
+def get_full_data(slug: str, max_retries: int = 3, conservative_wait: bool = False) -> Dict:
+    """
+    Main synchronous entrypoint used by pipeline.
+    Attempts (in order):
+      1) cloudscraper session (if available) to fetch overview page
+      2) if cloudscraper indicates Cloudflare/Turnstile or 403: fallback to Playwright
+      3) if both fail: optional scrapy-runspider fallback
+    Returns payload with keys:
+      _id, source, source_id, source_url, fetched_at, raw_prefix, main, reviews, recommendations, http, status
+    """
+    payload = {
+        "_id": f"ap_{slug}",
+        "source": "animeplanet",
+        "source_id": slug,
+        "source_url": f"{ANIMEPLANET_BASE}/manga/{slug}",
+        "fetched_at": datetime.utcnow().isoformat(),
+    }
+
+    session = _make_cloudscraper_session()
+    html_main = None
+    used_playwright = False
+
+    # 1) Try cloudscraper (or requests if cloudscraper missing)
+    if session is not None:
+        headers = dict(DEFAULT_HEADERS)
+        headers["User-Agent"] = random.choice(USER_AGENTS)
+        url = f"{ANIMEPLANET_BASE}/manga/{slug}"
+        try:
+            for attempt in range(max_retries):
+                try:
+                    r = session.get(url, headers=headers, timeout=30)
+                    status = getattr(r, "status_code", None)
+                    text = getattr(r, "text", "")
+                    logger.info("Request to %s: status=%s content_length=%d", url, status, len(text or ""))
+                    if status == 200 and not _is_challenge_html(text, status):
+                        html_main = text
+                        break
+                    # if challenge or 403 => retry a few times then escalate to playwright
+                    if _is_challenge_html(text, status) or status == 403:
+                        logger.warning("Detected challenge or 403 for %s (attempt %d)", url, attempt + 1)
+                        # backoff: if conservative mode wait longer
+                        wait = 10 + attempt * (20 if conservative_wait else 5) + random.random() * 3
+                        time.sleep(wait)
+                        continue
+                    # other codes: wait a bit and retry
+                    time.sleep(1.0 + random.random() * 1.5)
+                except Exception as e:
+                    logger.debug("Cloudscraper request error (attempt %d): %s", attempt + 1, e)
+                    time.sleep(1.0 + random.random() * 0.5)
+            else:
+                logger.info("Cloudscraper attempts exhausted for %s", url)
+        except Exception as e:
+            logger.debug("Cloudscraper session fetch failed: %s", e)
+
+    # 2) If no html_main from cloudscraper or session missing -> try Playwright
+    if not html_main:
+        logger.info("Falling back to Playwright for %s", slug)
+        used_playwright = True
+        try:
+            # use a new event loop for synchronous call
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            html_main = loop.run_until_complete(_fetch_with_playwright_url(f"{ANIMEPLANET_BASE}/manga/{slug}"))
+        except Exception as e:
+            logger.debug("Playwright fetch main failed: %s", e)
+            html_main = None
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                pass
+
+    if html_main:
+        payload["raw_prefix"] = html_main[:20000]
+        main = _parse_main_and_recommendations(html_main)
+        payload["main"] = {k: v for k, v in main.items() if k != "recommendations"}
+        # recommendations from main
+        payload["recommendations"] = main.get("recommendations", [])
+        # 3) Fetch /recommendations endpoint (dedicated) — try cloudscraper first, else playwright
+        rec_html = None
+        rec_url = f"{ANIMEPLANET_BASE}/manga/{slug}/recommendations"
+        # cloudscraper attempt
+        if session is not None:
+            try:
+                headers = dict(DEFAULT_HEADERS)
+                headers["User-Agent"] = random.choice(USER_AGENTS)
+                r = session.get(rec_url, headers=headers, timeout=30)
+                status = getattr(r, "status_code", None)
+                text = getattr(r, "text", "")
+                logger.info("Recommendations request %s status=%s len=%d", rec_url, status, len(text or ""))
+                if status == 200 and not _is_challenge_html(text, status):
+                    rec_html = text
+            except Exception as e:
+                logger.debug("cloudscraper rec request failed: %s", e)
+        if not rec_html:
+            # playwright fallback for rec endpoint
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                rec_html = loop.run_until_complete(_fetch_with_playwright_url(rec_url))
+            except Exception as e:
+                logger.debug("playwright rec fetch failed: %s", e)
+            finally:
+                try:
+                    loop.close()
+                except Exception:
+                    pass
+
+        if rec_html:
+            recs = _parse_main_and_recommendations(rec_html).get("recommendations", [])
+            # merge: add items from recs not already present (by slug)
+            seen = {r["slug"] for r in payload.get("recommendations", [])}
+            extras = [r for r in recs if r["slug"] not in seen]
+            if extras:
+                payload["recommendations"].extend(extras)
+
+        # 4) Fetch reviews page (/reviews)
+        rv_html = None
+        rv_url = f"{ANIMEPLANET_BASE}/manga/{slug}/reviews"
+        if session is not None:
+            try:
+                headers = dict(DEFAULT_HEADERS)
+                headers["User-Agent"] = random.choice(USER_AGENTS)
+                r = session.get(rv_url, headers=headers, timeout=30)
+                status = getattr(r, "status_code", None)
+                text = getattr(r, "text", "")
+                logger.info("Reviews request %s status=%s len=%d", rv_url, status, len(text or ""))
+                if status == 200 and not _is_challenge_html(text, status):
+                    rv_html = text
+            except Exception as e:
+                logger.debug("cloudscraper reviews request failed: %s", e)
+        if not rv_html:
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                rv_html = loop.run_until_complete(_fetch_with_playwright_url(rv_url))
+            except Exception as e:
+                logger.debug("playwright reviews fetch failed: %s", e)
+            finally:
+                try:
+                    loop.close()
+                except Exception:
+                    pass
+
+        payload["reviews"] = _parse_reviews(rv_html) if rv_html else []
+        payload["http"] = {"code": 200}
+        payload["status"] = "ok" if (payload.get("reviews") or payload.get("recommendations")) else "no_reviews"
+        return payload
+
+    # If we reached here: nothing fetched — try scrapy fallback (if available)
+    logger.info("All HTTP/Playwright attempts failed for ap_%s — trying scrapy spider fallback", slug)
+    spider_doc = _run_scrapy_and_read(slug)
+    if spider_doc:
+        spider_doc.setdefault("source", "animeplanet")
+        spider_doc.setdefault("source_id", slug)
+        return spider_doc
+
+    # ultimate fallback
+    payload.update({"reviews": [], "recommendations": [], "http": {"error": "could_not_fetch"}, "status": "error"})
+    return payload
+
+
+def get_reviews(slug: str) -> List[Dict]:
+    """
+    Backwards-compatible function: returns reviews list (possibly empty).
+    """
+    doc = get_full_data(slug)
+    return doc.get("reviews", [])
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\extractors\mal.py ---
+import logging
+from typing import Dict, List
+from .mal_fetcher import get_full_data, get_ranking_based_data, get_full_data_parallel
+
+logger = logging.getLogger(__name__)
+
+def collect_mal(source_id: str):
+    """
+    Collector entrypoint for MAL - single manga by ID.
+    - source_id: MAL numeric ID
+    """
+    try:
+        payload = get_full_data(source_id)
+        payload.setdefault("_id", f"mal_{source_id}")
+        payload.setdefault("source", "mal")
+        payload.setdefault("source_id", source_id)
+        return payload
+    except Exception as e:
+        logger.error("collect_mal failed for %s: %s", source_id, e, exc_info=True)
+        return {
+            "_id": f"mal_{source_id}",
+            "source": "mal",
+            "source_id": source_id,
+            "reviews": [],
+            "recommendations": [],
+            "manga_info": {},
+            "status": "error",
+            "http": {"error": str(e)},
+        }
+
+def collect_mal_ranking_based(start_limit: int = 0, max_pages: int = 100) -> List[Dict]:
+    """Independent MAL collection using ranking pages like project_dump.txt"""
+    logger.info(f"Starting MAL ranking-based collection from limit {start_limit}")
+    
+    # FALLBACK: If ranking pages fail, use known manga IDs for testing
+    results = get_ranking_based_data(start_limit, max_pages)
+    
+    if not results:
+        logger.warning("⚠️ Ranking pages failed - using fallback manga IDs for testing")
+        # Popular manga IDs for testing
+        test_ids = ["1", "2", "11", "13", "21", "30", "44", "74", "85", "121"]
+        logger.info(f"🔄 Testing with {len(test_ids)} popular manga IDs")
+        
+        from .mal_fetcher import get_full_data_parallel
+        results = get_full_data_parallel(test_ids, 3)
+        logger.info(f"✅ Fallback collection completed: {len(results)} manga")
+    
+    return results
+
+def collect_mal_parallel(source_ids: List[str], max_workers: int = 4):
+    """
+    Parallel collector for multiple MAL IDs with anti-blocking
+    - source_ids: List of MAL numeric IDs
+    - max_workers: Number of parallel workers
+    """
+    try:
+        results = get_full_data_parallel(source_ids, max_workers)
+        return results
+    except Exception as e:
+        logger.error(f"collect_mal_parallel failed: {e}", exc_info=True)
+        return [{
+            "_id": f"mal_{sid}",
+            "source": "mal",
+            "source_id": sid,
+            "reviews": [],
+            "recommendations": [],
+            "manga_info": {},
+            "status": "error",
+            "http": {"error": str(e)},
+        } for sid in source_ids]
+
+def collect_mal_batch(source_ids: List[str], batch_size: int = 20):
+    """
+    Batch collector for large-scale MAL processing - optimized for 24h target
+    - source_ids: List of MAL numeric IDs
+    - batch_size: Size of each processing batch (increased for speed)
+    """
+    try:
+        results = get_batch_data(source_ids, batch_size)
+        return results
+    except Exception as e:
+        logger.error(f"collect_mal_batch failed: {e}", exc_info=True)
+        return [{
+            "_id": f"mal_{sid}",
+            "source": "mal",
+            "source_id": sid,
+            "reviews": [],
+            "recommendations": [],
+            "manga_info": {},
+            "status": "error",
+            "http": {"error": str(e)},
+        } for sid in source_ids]
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\extractors\mal_fetcher.py ---
+import logging
+import random
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List
+import requests
+import lxml.html
+from lxml.cssselect import CSSSelector
+from bs4 import BeautifulSoup
+from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
+from concurrent.futures import ThreadPoolExecutor
+import threading
+
+logger = logging.getLogger(__name__)
+
+MAL_BASE = "https://myanimelist.net"
+MAL_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+]
+
+# Configuration for 87k manga in 24h - SPEED OPTIMIZED (2-3x faster)
+TARGET_OBJECTS_PER_HOUR = 100000 / 24  # ~3625 objects/hour
+MAX_WORKERS = 25  # Increased from 4 to 8 for 2x speed
+REQUESTS_PER_WORKER_PER_HOUR = TARGET_OBJECTS_PER_HOUR / MAX_WORKERS  # ~453 per worker
+SECONDS_PER_REQUEST = 3600 / REQUESTS_PER_WORKER_PER_HOUR  # ~8s per request per worker
+JITTER_FACTOR = 0.15  # Reduced jitter for faster processing
+RANK_INCREMENT = 50  # Process 50 manga per ranking page
+BATCH_SIZE = 20  # Increased batch size for parallel processing
+
+# Thread-safe rate limiting
+_last_request_time = {}
+_request_lock = threading.Lock()
+processed_manga_cache = set()
+
+# Speed optimization constants
+MIN_DELAY = 1.0  # Reduced from 2s to 1s
+MAX_DELAY = 3.0  # Reduced from 7s to 3s
+RETRY_DELAYS = [1, 2, 4]  # Faster retry progression
+REQUEST_TIMEOUT = 10  # Reduced from 15s to 10s
+
+def _parse_reviews(html: str, mal_id: str) -> List[Dict]:
+    if not html.strip():
+        logger.warning(f"Empty reviews HTML for {mal_id}")
+        return []
+    
+    soup = BeautifulSoup(html, "lxml")
+    reviews = []
+    
+    selectors = ["div.review-element", "div.review-element.js-review-element", "div.borderDark"]
+    for selector in selectors:
+        review_elements = soup.select(selector)
+        if review_elements:
+            logger.debug(f"Using selector '{selector}' for {mal_id}: found {len(review_elements)} reviews")
+            break
+    else:
+        logger.warning(f"No reviews found for {mal_id} with selectors: {selectors}")
+        return []
+    
+    for review in review_elements:
+        try:
+            review_id_elem = review.select_one('div.open a') or review.select_one('a[href*="/reviews/"]')
+            review_id = review_id_elem.get('href', '').split('/')[-1] if review_id_elem else ''
+            if not review_id:
+                continue
+            
+            review_text_elem = review.select_one('div.text') or review.select_one('div.review-body')
+            review_text = ''
+            if review_text_elem:
+                review_text = ' '.join(review_text_elem.get_text(' ', strip=True).split())
+            
+            if not review_text or len(review_text) < 5:
+                continue
+            
+            reactions_dict = review.get('data-reactions', '')
+            reactions = {}
+            if reactions_dict:
+                try:
+                    import json
+                    reactions_data = json.loads(reactions_dict)
+                    reaction_type_map = ['nice', 'loveIt', 'funny', 'confusing', 'informative', 'wellWritten', 'creative']
+                    reactions = {r: c for r, c in zip(reaction_type_map, reactions_data.get('count', ['0']*7))}
+                except:
+                    pass
+            
+            author_elem = review.select_one('div.username a') or review.select_one('div.reviewer a')
+            author = author_elem.get_text(strip=True) if author_elem else ''
+            
+            score_elem = review.select_one('div.rating span.num') or review.select_one('div.score')
+            score = score_elem.get_text(strip=True) if score_elem else ''
+            
+            post_time = review.select_one('div.update_at') or review.select_one('div.date')
+            post_time_text = post_time.get_text(strip=True) if post_time else ''
+            
+            episodes_seen_elem = review.select_one('.tag.preliminary span') or review.select_one('div.episodes-seen')
+            episodes_seen = episodes_seen_elem.get_text(strip=True) if episodes_seen_elem else ''
+            
+            recommendation_elem = review.select_one('.tag.recommended') or review.select_one('.tag.recommendation')
+            recommendation_status = recommendation_elem.get_text(strip=True) if recommendation_elem else ''
+            
+            profile_url_elem = review.select_one('div.thumb a') or review.select_one('div.reviewer a')
+            profile_url = profile_url_elem.get('href') if profile_url_elem else ''
+            
+            profile_img_elem = review.select_one('div.thumb a img') or review.select_one('div.reviewer img')
+            profile_img = profile_img_elem.get('src') if profile_img_elem else ''
+            
+            review_data = {
+                'reviewId': review_id,
+                'text': review_text[:3000],
+                'author': author,
+                'score': score,
+                'postTime': post_time_text,
+                'episodesSeen': episodes_seen,
+                'recommendationStatus': recommendation_status,
+                'profileUrl': profile_url,
+                'profileImage': profile_img,
+                **reactions
+            }
+            
+            reviews.append(review_data)
+        except Exception as e:
+            logger.debug(f"Error parsing review for {mal_id}: {e}")
+    
+    return reviews
+
+def _parse_recommendations(html: str) -> List[Dict]:
+    if not html.strip():
+        return []
+    
+    soup = BeautifulSoup(html, "lxml")
+    recs = []
+    
+    selectors = [
+        "div.borderClass a[href*='/manga/']",
+        "table.anime_detail_related_anime a[href*='/manga/']",
+        "div.spaceit_pad a[href*='/manga/']",
+        "td a[href*='/manga/']",
+        "a[href*='/manga/']:not([href*='/reviews']):not([href*='/userrecs'])"
+    ]
+    
+    for selector in selectors:
+        links = soup.select(selector)
+        for a in links:
+            href = a.get("href", "")
+            title = a.get_text(strip=True)
+            if "/manga/" not in href or not title or len(title) < 2:
+                continue
+            try:
+                mid = href.split("/manga/")[1].split("/")[0]
+                if mid.isdigit():
+                    reason = ""
+                    parent = a.find_parent('td') or a.find_parent('div')
+                    if parent:
+                        reason_elem = parent.find_next_sibling()
+                        if reason_elem:
+                            reason = reason_elem.get_text(strip=True)[:200]
+                    
+                    recs.append({
+                        "id": mid,
+                        "title": title,
+                        "url": href,
+                        "reason": reason
+                    })
+            except:
+                continue
+    
+    seen = set()
+    unique_recs = []
+    for rec in recs:
+        if rec["id"] not in seen:
+            seen.add(rec["id"])
+            unique_recs.append(rec)
+    
+    return unique_recs[:20]
+
+@retry(
+    retry=retry_if_exception_type((requests.exceptions.HTTPError, requests.exceptions.RequestException)),
+    wait=wait_exponential(multiplier=1.2, min=1, max=15),  # Faster retry: min 1s, max 15s
+    stop=stop_after_attempt(2),  # Reduced from 3 to 2 attempts
+    reraise=True
+)
+def _fetch_page(url: str, session: requests.Session, headers: Dict, mal_id: str, page_type: str, worker_id: int = 0) -> str:
+    """Thread-safe rate limiting with per-worker tracking - optimized for 24h target"""
+    with _request_lock:
+        current_time = time.time()
+        last_time = _last_request_time.get(worker_id, 0)
+        
+        # Reduced delays for 24h target
+        base_delay = max(2, SECONDS_PER_REQUEST * 0.7)  # 30% faster
+        jitter = random.uniform(-JITTER_FACTOR * base_delay, JITTER_FACTOR * base_delay)
+        required_delay = max(1, base_delay + jitter)  # Minimum 1s delay
+        
+        elapsed = current_time - last_time
+        if elapsed < required_delay:
+            sleep_time = required_delay - elapsed
+            time.sleep(sleep_time)
+        
+        _last_request_time[worker_id] = time.time()
+
+    try:
+        response = session.get(url, headers=headers, timeout=REQUEST_TIMEOUT)  # Optimized timeout
+        
+        # Save to temp folder for debugging
+        temp_folder = Path('tmp/mal_manga_data')
+        temp_folder.mkdir(parents=True, exist_ok=True)
+        with open(temp_folder / f'mal_{mal_id}_{page_type}.html', 'w', encoding='utf-8') as f:
+            f.write(response.text if response.ok else '')
+        
+        if response.status_code == 404:
+            logger.warning(f"MAL ID {mal_id} not found (404)")
+            return ""
+        if response.status_code == 405:
+            return ""
+        
+        response.raise_for_status()
+        return response.text
+    except Exception as e:
+        logger.warning(f"Failed to fetch {url}: {e}")
+        return ""
+
+def _fetch_ranking_page(limit: int, worker_id: int = 0) -> List[str]:
+    """Fetch manga IDs from ranking page - independent approach like project_dump.txt"""
+    headers = {
+        "User-Agent": random.choice(MAL_USER_AGENTS),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Referer": "https://myanimelist.net/",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache"
+    }
+    
+    session = requests.Session()
+    rank_url = f'https://myanimelist.net/topmanga.php?limit={limit}'
+    
+    try:
+        # Direct request instead of using _fetch_page to avoid 405 handling
+        response = session.get(rank_url, headers=headers, timeout=REQUEST_TIMEOUT)
+        
+        # Handle different status codes
+        if response.status_code == 405:
+            logger.warning(f"MAL returned 405 for ranking page {limit} - trying alternative approach")
+            # Try without query params first
+            alt_url = 'https://myanimelist.net/topmanga.php'
+            response = session.get(alt_url, headers=headers, timeout=REQUEST_TIMEOUT)
+        
+        if response.status_code == 403:
+            logger.warning(f"MAL blocked request for ranking page {limit} - need better anti-blocking")
+            return []
+            
+        if not response.ok:
+            logger.warning(f"MAL ranking page {limit} returned {response.status_code}")
+            return []
+        
+        html = response.text
+        if not html.strip():
+            return []
+        
+        tree = lxml.html.fromstring(html)
+        
+        # Try multiple selectors for manga URLs
+        selectors = [
+            'a.hoverinfo_trigger',
+            'td.title a',
+            'a[href*="/manga/"]',
+            '.ranking-list a.hoverinfo_trigger'
+        ]
+        
+        manga_urls = []
+        for selector in selectors:
+            try:
+                css_selector = CSSSelector(selector)
+                urls = [elem.get('href') for elem in css_selector(tree) if elem.get('href')]
+                manga_urls.extend(urls)
+                if urls:
+                    logger.debug(f"Selector '{selector}' found {len(urls)} URLs")
+                    break
+            except:
+                continue
+        
+        # Extract manga IDs from URLs
+        manga_ids = []
+        for url in manga_urls:
+            if url and '/manga/' in url:
+                try:
+                    parts = url.split('/')
+                    mal_id = None
+                    for i, part in enumerate(parts):
+                        if part == 'manga' and i + 1 < len(parts):
+                            mal_id = parts[i + 1]
+                            break
+                    
+                    if mal_id and mal_id.isdigit() and mal_id not in processed_manga_cache:
+                        manga_ids.append(mal_id)
+                        processed_manga_cache.add(mal_id)
+                except:
+                    continue
+        
+        logger.info(f"Ranking page {limit}: Found {len(manga_ids)} new manga IDs")
+        return manga_ids
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch ranking page {limit}: {e}")
+        return []
+
+def _fetch_mal_comprehensive(mal_id: str, worker_id: int = 0) -> tuple[str, str, List[Dict]]:
+    """Comprehensive manga data fetch - optimized for speed"""
+    headers = {
+        "User-Agent": random.choice(MAL_USER_AGENTS),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Referer": "https://myanimelist.net/",
+    }
+    
+    session = requests.Session()
+    
+    # Fetch main page
+    main_html = _fetch_page(f"{MAL_BASE}/manga/{mal_id}", session, headers, mal_id, "main", worker_id)
+    
+    # Fetch recommendations page
+    recs_html = _fetch_page(f"{MAL_BASE}/manga/{mal_id}/_/userrecs", session, headers, mal_id, "recs", worker_id)
+    
+    # Fetch reviews - limit to first page only for maximum speed
+    reviews = []
+    for page in range(1, 2):  # Only first page for 3x speed boost
+        review_url = f"{MAL_BASE}/manga/{mal_id}/reviews?p={page}"
+        try:
+            review_html = _fetch_page(review_url, session, headers, mal_id, f"reviews_page_{page}", worker_id)
+            if not review_html:
+                break
+            page_reviews = _parse_reviews(review_html, mal_id)
+            reviews.extend(page_reviews)
+            
+            if not page_reviews or len(page_reviews) < 3:  # Stop if very few reviews (speed optimization)
+                break
+                
+        except Exception as e:
+            logger.debug(f"Review page {page} failed for {mal_id}: {e}")
+            break
+    
+    return main_html, recs_html, reviews
+
+def _parse_manga_info(html: str, mal_id: str) -> Dict:
+    if not html.strip():
+        return {}
+    
+    tree = lxml.html.fromstring(html)
+    info = {}
+    
+    try:
+        info['jpName'] = tree.xpath('//span[contains(text(), "Japanese:")]/following::text()')[0].strip() if tree.xpath('//span[contains(text(), "Japanese:")]/following::text()') else ''
+        info['engName'] = tree.xpath('//span[contains(text(), "English:")]/following::text()')[0].strip() if tree.xpath('//span[contains(text(), "English:")]/following::text()') else ''
+        info['synonyms'] = tree.xpath('//span[contains(text(), "Synonyms:")]/following::text()')[0].strip() if tree.xpath('//span[contains(text(), "Synonyms:")]/following::text()') else ''
+        info['type'] = tree.xpath('//span[text()="Type:"]/following-sibling::a/text()')[0] if tree.xpath('//span[text()="Type:"]/following-sibling::a/text()') else ''
+        info['volumes'] = tree.xpath('//span[text()="Volumes:"]/following::text()')[0].strip() if tree.xpath('//span[text()="Volumes:"]/following::text()') else ''
+        info['chapters'] = tree.xpath('//span[text()="Chapters:"]/following::text()')[0].strip() if tree.xpath('//span[text()="Chapters:"]/following::text()') else ''
+        info['status'] = tree.xpath('//span[text()="Status:"]/following::text()')[0].strip() if tree.xpath('//span[text()="Status:"]/following::text()') else ''
+        info['published'] = tree.xpath('//span[text()="Published:"]/following::text()')[0].strip() if tree.xpath('//span[text()="Published:"]/following::text()') else ''
+        info['genres'] = ', '.join(tree.xpath('//span[text()="Genres:"]/following-sibling::a/text()'))
+        info['themes'] = ', '.join(tree.xpath('//span[text()="Themes:"]/following-sibling::a/text()'))
+        info['demographic'] = tree.xpath('//span[text()="Demographic:"]/following-sibling::a/text()')[0] if tree.xpath('//span[text()="Demographic:"]/following-sibling::a/text()') else ''
+        info['serialization'] = ', '.join(tree.xpath('//span[text()="Serialization:"]/following-sibling::a/text()'))
+        info['authors'] = ', '.join(tree.xpath('//span[text()="Authors:"]/following-sibling::a/text()'))
+        info['score'] = CSSSelector('span.score-label')(tree)[0].text if CSSSelector('span.score-label')(tree) else ''
+        info['ranked'] = tree.xpath('//span[text()="Ranked:"]/following::text()')[0].strip() if tree.xpath('//span[text()="Ranked:"]/following::text()') else ''
+        info['popularity'] = tree.xpath('//span[text()="Popularity:"]/following::text()')[0].strip() if tree.xpath('//span[text()="Popularity:"]/following::text()') else ''
+        info['members'] = tree.xpath('//span[text()="Members:"]/following::text()')[0].strip() if tree.xpath('//span[text()="Members:"]/following::text()') else ''
+        info['favorites'] = tree.xpath('//span[text()="Favorites:"]/following::text()')[0].strip() if tree.xpath('//span[text()="Favorites:"]/following::text()') else ''
+        info['cover_image'] = CSSSelector('div.leftside img.lazyload')(tree)[0].get('src') or CSSSelector('div.leftside img.lazyload')(tree)[0].get('data-src') if CSSSelector('div.leftside img.lazyload')(tree) else ''
+        info['synopsis'] = tree.xpath('//span[@itemprop="description"]/text()')[0].strip() if tree.xpath('//span[@itemprop="description"]/text()') else ''
+    except Exception as e:
+        logger.warning(f"Error parsing manga info for {mal_id}: {e}")
+    
+    return info
+
+def get_full_data(mal_id: str, worker_id: int = 0) -> Dict:
+    """Get comprehensive manga data for single ID"""
+    payload = {
+        "_id": f"mal_{mal_id}",
+        "source": "mal",
+        "source_id": mal_id,
+        "source_url": f"{MAL_BASE}/manga/{mal_id}",
+        "fetched_at": datetime.utcnow().isoformat(),
+    }
+    
+    try:
+        main_html, recs_html, reviews = _fetch_mal_comprehensive(mal_id, worker_id)
+        
+        payload["manga_info"] = _parse_manga_info(main_html, mal_id)
+        payload["recommendations"] = _parse_recommendations(recs_html) if recs_html else []
+        payload["reviews"] = reviews if reviews else []
+        
+        has_data = bool(payload["reviews"] or payload["recommendations"] or payload["manga_info"])
+        payload["status"] = "ok" if has_data else "no_reviews"
+        payload["http"] = {"code": 200} if has_data else {"error": "no_data"}
+    except Exception as e:
+        logger.error(f"MAL fetch failed for {mal_id}: {e}")
+        payload.update({"recommendations": [], "reviews": [], "manga_info": {}, "status": "error", "http": {"error": str(e)}})
+
+    return payload
+
+def get_ranking_based_data(start_limit: int = 0, max_pages: int = 100) -> List[Dict]:
+    """
+    Collect manga data from MAL ranking pages independently.
+    
+    Args:
+        start_limit: Starting ranking position (0, 50, 100, ...)
+        max_pages: Maximum number of ranking pages to process (0 = unlimited)
+        
+    Returns:
+        List of manga data dictionaries
+    """
+    logger.info(f"🚀 Starting MAL ranking-based collection from limit {start_limit}")
+    
+    if max_pages == 0:
+        logger.info(f"🔄 UNLIMITED MODE: Will process ALL ranking pages until no more manga found")
+    else:
+        logger.info(f"📊 Will process up to {max_pages} ranking pages")
+    
+    all_results = []
+    current_limit = start_limit
+    page_count = 0
+    consecutive_empty_pages = 0
+    
+    while True:
+        # Check if we should stop (limited mode only)
+        if max_pages > 0 and page_count >= max_pages:
+            logger.info(f"📊 Reached maximum pages limit ({max_pages})")
+            break
+            
+        # Check if we hit too many consecutive empty pages (unlimited mode)
+        if consecutive_empty_pages >= 10:  # Increased from 5 to 10 for more persistence
+            logger.info(f"🛑 Stopping: Found {consecutive_empty_pages} consecutive empty pages")
+            break
+        
+        page_count += 1
+        logger.info(f"📄 Processing ranking page {page_count} (limit={current_limit})")
+        
+        try:
+            # Fetch manga IDs from current ranking page
+            manga_ids = _fetch_ranking_page(current_limit)
+            
+            if not manga_ids:
+                consecutive_empty_pages += 1
+                logger.warning(f"⚠️ No manga IDs found on ranking page {current_limit} (empty #{consecutive_empty_pages})")
+                current_limit += RANK_INCREMENT
+                # Add delay before retrying next page
+                time.sleep(random.uniform(2, 5))
+                continue
+            
+            # Reset empty page counter
+            consecutive_empty_pages = 0
+            
+            logger.info(f"📋 Found {len(manga_ids)} manga IDs on ranking page {current_limit}")
+            
+            # Process manga IDs in parallel batches
+            batch_results = get_full_data_parallel(manga_ids, MAX_WORKERS)
+            all_results.extend(batch_results)
+            
+            logger.info(f"✅ Processed {len(batch_results)} manga from ranking page {current_limit}")
+            logger.info(f"📊 Total manga processed so far: {len(all_results)}")
+            
+            # Move to next ranking page
+            current_limit += RANK_INCREMENT
+            
+            # Reduced delay between ranking pages for speed
+            delay = random.uniform(1.5, 3.5)  # Reduced from 3-7s to 1.5-3.5s
+            logger.info(f"⏳ Waiting {delay:.1f}s before next ranking page...")
+            time.sleep(delay)
+            
+        except Exception as e:
+            logger.error(f"❌ Error processing ranking page {current_limit}: {e}")
+            consecutive_empty_pages += 1  # Count errors as empty pages
+            current_limit += RANK_INCREMENT
+            # Add delay before retrying after error
+            time.sleep(random.uniform(3, 8))
+            continue
+    
+    logger.info(f"🎉 MAL ranking-based collection completed! Total: {len(all_results)} manga")
+    return all_results
+
+def get_full_data_parallel(mal_ids: List[str], max_workers: int = MAX_WORKERS) -> List[Dict]:
+    """Parallel version optimized for 24h target with anti-blocking"""
+    if not mal_ids:
+        return []
+    
+    logger.info(f"Starting parallel MAL fetch: {len(mal_ids)} manga with {max_workers} workers")
+    
+    def worker_task(worker_id: int, batch_ids: List[str]) -> List[Dict]:
+        """Worker function with optimized rate limiting"""
+        results = []
+        for i, mal_id in enumerate(batch_ids):
+            try:
+                logger.debug(f"Worker {worker_id}: Fetching MAL {mal_id} ({i+1}/{len(batch_ids)})")
+                # Thread-safe rate limiting - SPEED OPTIMIZED
+                with _request_lock:
+                    worker_key = f"worker_{worker_id}"
+                    current_time = time.time()
+                    
+                    if worker_key in _last_request_time:
+                        elapsed = current_time - _last_request_time[worker_key]
+                        min_interval = random.uniform(MIN_DELAY, MAX_DELAY)  # 1-3s instead of 1.5-4s
+                        
+                        if elapsed < min_interval:
+                            sleep_time = min_interval - elapsed + random.uniform(0, 0.2)  # Reduced jitter
+                            logger.debug(f"Worker {worker_id}: Rate limiting, sleeping {sleep_time:.1f}s")
+                            time.sleep(sleep_time)
+                    
+                    _last_request_time[worker_key] = time.time()
+                
+                result = get_full_data(mal_id, worker_id)
+                results.append(result)
+                
+                # Minimal inter-request delay within worker - SPEED OPTIMIZED
+                if i < len(batch_ids) - 1:
+                    inter_delay = random.uniform(0.3, 0.8)  # Further reduced for 3x speed
+                    time.sleep(inter_delay)
+                    
+            except Exception as e:
+                logger.error(f"Worker {worker_id}: Error fetching MAL {mal_id}: {e}")
+                results.append({
+                    "_id": f"mal_{mal_id}",
+                    "source": "mal",
+                    "source_id": mal_id,
+                    "reviews": [],
+                    "recommendations": [],
+                    "manga_info": {},
+                    "status": "error",
+                    "http": {"error": str(e)}
+                })
+        return results
+    
+    # Chia thành batches cho parallel processing - OPTIMIZED
+    batch_size = max(1, len(mal_ids) // max_workers)
+    if batch_size > BATCH_SIZE:  # Use optimized batch size
+        batch_size = BATCH_SIZE
+    batches = [mal_ids[i:i+batch_size] for i in range(0, len(mal_ids), batch_size)]
+    
+    all_results = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = []
+        for worker_id, chunk in enumerate(batches):
+            if chunk:  # Only submit non-empty chunks
+                future = executor.submit(worker_task, worker_id, chunk)
+                futures.append(future)
+        
+        for future in futures:
+            try:
+                worker_results = future.result()
+                all_results.extend(worker_results)
+            except Exception as e:
+                logger.error(f"Worker failed: {e}")
+    
+    logger.info(f"Parallel MAL fetch completed: {len(all_results)} results")
+    return all_results
+
+def get_batch_data(mal_ids: List[str], batch_size: int = 20) -> List[Dict]:
+    """Batch processing optimized for 24h target"""
+    all_results = []
+    
+    for i in range(0, len(mal_ids), batch_size):
+        batch = mal_ids[i:i+batch_size]
+        logger.info(f"Processing batch {i//batch_size + 1}: {len(batch)} manga")
+        
+        # Use parallel processing for each batch
+        batch_results = get_full_data_parallel(batch, min(MAX_WORKERS, len(batch)))
+        all_results.extend(batch_results)
+        
+        # Reduced inter-batch delay for 24h target
+        if i + batch_size < len(mal_ids):
+            batch_delay = random.uniform(4, 8)  # Reduced to 4-8s
+            logger.info(f"Batch delay: {batch_delay:.1f}s")
+            time.sleep(batch_delay)
+    
+    return all_results
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\extractors\mangaupdates.py ---
+import logging
+from .mangaupdates_fetcher import get_full_data
+
+logger = logging.getLogger(__name__)
+
+def collect_mangaupdates(mangadex_id: str, source_id: str):
+    """
+    Collector entrypoint for MangaUpdates.
+    - source_id: MU numeric id or slug
+    """
+    try:
+        payload = get_full_data(source_id)
+        payload.setdefault("_id", f"mu_{source_id}")
+        payload.setdefault("source", "mangaupdates")
+        payload.setdefault("source_id", source_id)
+        return payload
+    except Exception as e:
+        logger.error("collect_mangaupdates failed for %s: %s", source_id, e, exc_info=True)
+        return {
+            "_id": f"mu_{source_id}",
+            "source": "mangaupdates",
+            "source_id": source_id,
+            "reviews": [],
+            "recommendations": [],
+            "status": "error",
+            "http": {"error": str(e)},
+        }
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-18-fetch-mangadata-from-famous-websites\src\extractors\mangaupdates_fetcher.py ---
+import logging
+from datetime import datetime
+from typing import Dict, List
+import requests
+from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
+
+MU_BASE = "https://www.mangaupdates.com"
+
+
+def _parse_reviews(html: str) -> List[Dict]:
+    soup = BeautifulSoup(html, "lxml")
+    reviews = []
+    for div in soup.select(".sMemberComment, .commentText"):
+        text = div.get_text(" ", strip=True)
+        if text:
+            reviews.append({"text": text})
+    return reviews
+
+
+def _parse_recommendations(html: str) -> List[Dict]:
+    soup = BeautifulSoup(html, "lxml")
+    recs = []
+    for a in soup.select("a[href*='/series/']"):
+        href = a.get("href", "")
+        if "/series/" not in href:
+            continue
+        sid = href.split("/series/")[-1].split("?")[0]
+        recs.append({"id": sid, "url": href})
+    return recs
+
+
+def get_full_data(mu_id: str) -> Dict:
+    payload = {
+        "_id": f"mu_{mu_id}",
+        "source": "mangaupdates",
+        "source_id": mu_id,
+        "source_url": f"{MU_BASE}/series/{mu_id}",
+        "fetched_at": datetime.utcnow().isoformat(),
+    }
+    try:
+        r1 = requests.get(f"{MU_BASE}/series.html?id={mu_id}", timeout=20)
+        payload["recommendations"] = _parse_recommendations(r1.text) if r1.ok else []
+        payload["reviews"] = _parse_reviews(r1.text) if r1.ok else []
+        payload["status"] = "ok" if (payload["reviews"] or payload["recommendations"]) else "no_reviews"
+        payload["http"] = {"code": 200}
+    except Exception as e:
+        logger.error("MangaUpdates fetch failed: %s", e, exc_info=True)
+        payload.update({"recommendations": [], "reviews": [], "status": "error", "http": {"error": str(e)}})
+
+    return payload
+=== Folder: tmp ===
+
+=== Folder: tmp\mal_data ===
+
+=== Folder: tmp\mal_manga_data ===

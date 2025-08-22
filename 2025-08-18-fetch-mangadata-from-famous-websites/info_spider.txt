@@ -1,0 +1,159 @@
+from pathlib import Path
+import json
+import datetime
+import re
+
+import scrapy
+import lxml.html
+from lxml.cssselect import CSSSelector
+from loguru import logger
+
+from utils.dbUtil import AnimeAccess, Database
+from utils.gloVar import TEMP_INFO_FOLDER, RANK_INCREMENT
+
+class InfoSpider(scrapy.Spider):
+    name = 'info_spider'
+    custom_settings = {
+        'DOWNLOAD_DELAY': 2,
+        'CONCURRENT_REQUESTS': 64,
+        'CONCURRENT_REQUESTS_PER_DOMAIN': 32,
+        'DOWNLOAD_TIMEOUT': 15,
+        'RETRY_HTTP_CODES': [429],
+        'RETRY_TIMES': 5,
+        'FEED_EXPORT_ENCODING': 'utf-8',
+        'ITEM_PIPELINES': {
+            'info_spider.InfoPipeline': 300,
+        },
+    }
+    DOWNLOADER_MIDDLEWARES = {
+        'scrapy_user_agents.middlewares.RandomUserAgentMiddleware': 400,
+    }
+    COOKIES_ENABLED = False
+    DEFAULT_REQUEST_HEADERS = {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en',
+        'Accept-Encoding': 'gzip, deflate',
+    }
+
+    def __init__(self):
+        self.db = Database()
+        self.anime_access = AnimeAccess(self.db)
+        self.batch_data = []
+        self.batch_size = 50
+        self.json_file = Path(TEMP_INFO_FOLDER) / 'all_anime.json'
+        self.json_data = []
+        Path(TEMP_INFO_FOLDER).mkdir(parents=True, exist_ok=True)
+
+    def start_requests(self):
+        rank_url = 'https://myanimelist.net/topanime.php?limit=0'
+        yield scrapy.Request(url=rank_url, callback=self.parse_rank)
+
+    def parse_rank(self, response):
+        content_type = response.headers.get('Content-Type', b'').decode('utf-8', errors='ignore')
+        logger.debug(f"Content-Type: {content_type}")
+
+        html_text = response.body.decode('utf-8', errors='ignore')
+        tree = lxml.html.fromstring(html_text)
+
+        works_selector = CSSSelector('tr.ranking-list')
+        works = works_selector(tree)
+        if not works:
+            logger.warning("Không tìm thấy danh sách anime trên trang. Kiểm tra lại selector hoặc trang web.")
+            return
+
+        url_selector = CSSSelector('a.hoverinfo_trigger.fl-l.ml12.mr8')
+        info_urls = [elem.get('href') for elem in url_selector(tree) if elem.get('href')]
+
+        for info_url in info_urls:
+            if not info_url:
+                continue
+            work_id = info_url.split('/')[4]
+            work_id_name = str(work_id).zfill(6)
+            work_id_file = Path(TEMP_INFO_FOLDER) / f'{work_id_name}.json'
+
+            if not work_id_file.exists():
+                yield scrapy.Request(url=info_url, callback=self.parse_info)
+            else:
+                logger.debug(f'[{work_id_name}] - JSON file exists')
+
+        current_limit = int(response.url.split('=')[-1])
+        if works:
+            next_limit = current_limit + RANK_INCREMENT
+            next_url = f'https://myanimelist.net/topanime.php?limit={next_limit}'
+            yield scrapy.Request(url=next_url, callback=self.parse_rank)
+
+    def parse_info(self, response):
+        html_text = response.body.decode('utf-8', errors='ignore')
+        tree = lxml.html.fromstring(html_text)
+
+        url = response.url
+        work_id = response.url.split('/')[4]
+
+        themes_list = tree.xpath('//span[text()="Themes:"]/following-sibling::a/text()')
+        themes = ', '.join(str(theme) for theme in themes_list) if themes_list else str(tree.xpath('//span[text()="Theme:"]/following-sibling::a/text()')[0]) if tree.xpath('//span[text()="Theme:"]/following-sibling::a/text()') else ''
+
+        genres_list = tree.xpath('//span[text()="Genres:"]/following-sibling::a/text()')
+        genres = ', '.join(str(genre) for genre in genres_list) if genres_list else str(tree.xpath('//span[text()="Genre:"]/following-sibling::a/text()')[0]) if tree.xpath('//span[text()="Genre:"]/following-sibling::a/text()') else ''
+
+        cover_image_selector = CSSSelector('div.leftside img.lazyload')
+        cover_image_elem = cover_image_selector(tree)
+        cover_image_url = cover_image_elem[0].get('src') if cover_image_elem and cover_image_elem[0].get('src') else cover_image_elem[0].get('data-src') if cover_image_elem and cover_image_elem[0].get('data-src') else ''
+
+        data = {
+            'workId': work_id,
+            'url': url,
+            'jpName': str(tree.xpath('//span[contains(text(), "Japanese:")]/following::text()')[0]).strip() if tree.xpath('//span[contains(text(), "Japanese:")]/following::text()') else '',
+            'engName': str(tree.xpath('//span[contains(text(), "English:")]/following::text()')[0]).strip() if tree.xpath('//span[contains(text(), "English:")]/following::text()') else '',
+            'synonymsName': str(tree.xpath('//span[contains(text(), "Synonyms:")]/following::text()')[0]).strip() if tree.xpath('//span[contains(text(), "Synonyms:")]/following::text()') else '',
+            'workType': str(tree.xpath('//span[text()="Type:"]/following-sibling::a/text()')[0]) if tree.xpath('//span[text()="Type:"]/following-sibling::a/text()') else '',
+            'episodes': str(tree.xpath('//span[text()="Episodes:"]/following::text()')[0]).strip() if tree.xpath('//span[text()="Episodes:"]/following::text()') else '',
+            'status': str(tree.xpath('//span[text()="Status:"]/following::text()')[0]).strip() if tree.xpath('//span[text()="Status:"]/following::text()') else '',
+            'aired': str(tree.xpath('//span[text()="Aired:"]/following::text()')[0]).strip() if tree.xpath('//span[text()="Aired:"]/following::text()') else '',
+            'premiered': str(tree.xpath('//span[text()="Premiered:"]/following-sibling::a/text()')[0]) if tree.xpath('//span[text()="Premiered:"]/following-sibling::a/text()') else '',
+            'producer': ', '.join(str(producer) for producer in tree.xpath('//span[text()="Producers:"]/following-sibling::a/text()')),
+            'broadcast': str(tree.xpath('//span[contains(text(), "Broadcast:")]/following-sibling::text()')[0]).strip() if tree.xpath('//span[contains(text(), "Broadcast:")]/following-sibling::text()') else '',
+            'licensors': ', '.join(str(licensor) for licensor in tree.xpath('//span[text()="Licensors:"]/following-sibling::a/text()')),
+            'studios': ', '.join(str(studio) for studio in tree.xpath('//span[text()="Studios:"]/following-sibling::a/text()')),
+            'genres': genres,
+            'themes': themes,
+            'demographic': str(tree.xpath('//span[text()="Demographic:"]/following-sibling::a/text()')[0]) if tree.xpath('//span[text()="Demographic:"]/following-sibling::a/text()') else '',
+            'source': str(tree.xpath('//span[contains(text(), "Source:")]/following-sibling::text()')[0]).strip() if tree.xpath('//span[contains(text(), "Source:")]/following-sibling::text()') else '',
+            'duration': str(tree.xpath('//span[contains(text(), "Duration:")]/following-sibling::text()')[0]).strip() if tree.xpath('//span[contains(text(), "Duration:")]/following-sibling::text()') else '',
+            'rating': str(tree.xpath('//span[text()="Rating:"]/following::text()')[0]).strip() if tree.xpath('//span[text()="Rating:"]/following::text()') else '',
+            'score': str(CSSSelector('span.score-label')(tree)[0].text) if CSSSelector('span.score-label')(tree) else '',
+            'allRank': str(tree.xpath('//span[text()="Ranked:"]/following::text()')[0]).strip() if tree.xpath('//span[text()="Ranked:"]/following::text()') else '',
+            'popularityRank': str(tree.xpath('//span[text()="Popularity:"]/following::text()')[0]).strip() if tree.xpath('//span[text()="Popularity:"]/following::text()') else '',
+            'members': str(tree.xpath('//span[text()="Members:"]/following::text()')[0]).strip() if tree.xpath('//span[text()="Members:"]/following::text()') else '',
+            'favorites': str(tree.xpath('//span[text()="Favorites:"]/following::text()')[0]).strip() if tree.xpath('//span[text()="Favorites:"]/following::text()') else '',
+            'scoredByUser': str(tree.xpath('//span[@itemprop="ratingCount"]/text()')[0]).strip() if tree.xpath('//span[@itemprop="ratingCount"]/text()') else '',
+            'lastUpdate': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),  # Sửa lỗi định dạng thời gian
+            'coverImagePath': cover_image_url
+        }
+
+        yield data
+
+    def close(self, reason):
+        if self.json_data:
+            with open(self.json_file, 'w', encoding='utf-8') as p:
+                json.dump(self.json_data, p, indent=4, ensure_ascii=False)
+        if self.batch_data:
+            self.anime_access.push_work_infos_to_database(self.batch_data)
+
+class InfoPipeline:
+    def __init__(self):
+        self.db = Database()
+        self.anime_access = AnimeAccess(self.db)
+
+    def process_item(self, item, spider):
+        spider.batch_data.append(item)
+        spider.json_data.append(item)
+
+        if len(spider.batch_data) >= spider.batch_size:
+            spider.anime_access.push_work_infos_to_database(spider.batch_data)
+            spider.batch_data = []
+
+        if len(spider.json_data) >= 100:
+            with open(spider.json_file, 'w', encoding='utf-8') as p:
+                json.dump(spider.json_data, p, indent=4, ensure_ascii=False)
+
+        return item

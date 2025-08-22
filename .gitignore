@@ -1,1 +1,29 @@
 *.csv
+# Ignore Python virtual envs
+.env*
+venv/
+.venv/
+*/.env*/
+*/venv*/
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore data, log, cache
+*.log
+*.sqlite3
+*.csv
+*.parquet
+*.jsonl
+*.zip
+*.tar.gz
+
+# Ignore Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Ignore system files
+.DS_Store
+Thumbs.db

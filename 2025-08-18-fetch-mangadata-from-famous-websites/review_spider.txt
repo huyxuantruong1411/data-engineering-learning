@@ -1,0 +1,171 @@
+from pathlib import Path
+import json
+import scrapy
+from loguru import logger
+from utils.dbUtil import AnimeAccess, Database
+
+class ReviewSpider(scrapy.Spider):
+    name = 'review_spider'
+    allowed_domains = ['myanimelist.net']
+    custom_settings = {
+        'DOWNLOAD_DELAY': 0.25,
+        'CONCURRENT_REQUESTS': 64,
+        'CONCURRENT_REQUESTS_PER_DOMAIN': 32,
+        'RETRY_HTTP_CODES': [429, 500, 502, 503, 504],
+        'RETRY_TIMES': 10,
+        'AUTOTHROTTLE_ENABLED': True,
+        'AUTOTHROTTLE_START_DELAY': 0.25,
+        'AUTOTHROTTLE_MAX_DELAY': 5.0,
+        'AUTOTHROTTLE_TARGET_CONCURRENCY': 8.0,
+        'FEED_EXPORT_ENCODING': 'utf-8',
+        'COOKIES_ENABLED': False,
+    }
+
+    DOWNLOADER_MIDDLEWARES = {
+        'scrapy_user_agents.middlewares.RandomUserAgentMiddleware': 400,
+    }
+    COOKIES_ENABLED = False
+    DEFAULT_REQUEST_HEADERS = {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en',
+        'Accept-Encoding': 'gzip, deflate',
+    }
+
+    def __init__(self):
+        super().__init__()
+        self.db = Database()
+        self.anime_access = AnimeAccess(self.db)
+        self.urls = iter(self.anime_access.get_all_work_urls())
+        
+        #with open('recent_urls.json', 'r', encoding='utf-8') as f:
+        #    self.urls = iter(json.load(f))
+        
+        self.temp_reviews_folder = Path('tmp/reviews')
+        self.temp_reviews_folder.mkdir(parents=True, exist_ok=True)
+
+    def start_requests_old(self):
+        for url in self.urls:
+            work_id = url.split('/')[4]
+            work_id_name = str(work_id).zfill(6)
+            work_reviews_file = self.temp_reviews_folder / f'{work_id_name}_reviews.json'
+
+            if not work_reviews_file.exists():
+                base_url = f"{url}/reviews?sort=newest&filter_check=&filter_hide=&preliminary=on&spoiler=on&p="
+                yield scrapy.Request(
+                    url=base_url + '1',
+                    callback=self.parse,
+                    meta={'base_url': base_url, 'page_number': 2, 'work_url': url},
+                    dont_filter=True
+                )
+            else:
+                logger.debug(f'[{work_id_name}] - Reviews JSON file exists, skipping...')
+
+    def start_requests(self):
+        urls = list(self.anime_access.get_all_work_urls())
+        for url in urls:
+            work_id = url.split('/')[4]
+            work_id_name = str(work_id).zfill(6)
+            work_reviews_file = self.temp_reviews_folder / f'{work_id_name}_reviews.json'
+
+            if not work_reviews_file.exists():
+                base_url = f"{url}/reviews?sort=newest&filter_check=&filter_hide=&preliminary=on&spoiler=on&p="
+                yield scrapy.Request(
+                    url=base_url + '1',
+                    callback=self.parse,
+                    meta={'base_url': base_url, 'page_number': 2, 'work_url': url},
+                    dont_filter=True
+                )
+            else:
+                logger.debug(f'[{work_id_name}] - Reviews JSON file exists, skipping...')
+
+    def parse(self, response):
+        # Làm sạch nội dung phản hồi
+        try:
+            # Ép buộc giải mã và mã hóa lại nội dung thành utf-8, bỏ qua lỗi
+            cleaned_text = response.body.decode('utf-8', errors='ignore')
+            response = response.replace(body=cleaned_text.encode('utf-8'))
+        except Exception as e:
+            logger.error(f"Error cleaning response encoding: {e}")
+            return
+
+        reviews = []
+
+        url = response.url
+        work_id = url.split('/')[4]
+        work_name = url.split('/')[5]
+        logger.info(f"Processing page: [{work_id}][{work_name}]")
+
+        review_blocks = response.css('div.review-element')
+        for review in review_blocks:
+            review_id = review.css('div.open a::attr(href)').re_first(r'\d+')
+            if not review_id:
+                continue
+
+            reactions_dict = review.attrib.get('data-reactions', '')
+            if reactions_dict:
+                reactions_data = json.loads(reactions_dict)
+            else:
+                reactions_data = {"icon": [], "num": 0, "count": ["0", "0", "0", "0", "0", "0", "0"]}
+
+            reaction_type_map = [
+                'nice', 'loveIt', 'funny', 'confusing', 'informative', 'wellWritten', 'creative'
+            ]
+            reactions = {r: c for r, c in zip(reaction_type_map, reactions_data['count'])}
+            logger.debug(f'[W{work_id}][R{review_id}] {reactions}')
+
+            review_text = ''.join(review.css('div.text *::text').getall()).strip()
+            post_time = review.css('div.update_at::text').get()
+            if not post_time or not review_text:
+                continue
+
+            review_data = {
+                'workId': work_id,
+                'workName': work_name,
+                'reviewId': review_id,
+                'url': url,
+                'postTime': post_time,  # Will be parsed in loadReview.py
+                'episodesSeen': review.css('.tag.preliminary span::text').get().strip() if review.css('.tag.preliminary span::text').get() else None,
+                'author': review.css('div.username a::text').get(),
+                'review': review_text,
+                'overallRating': review.css('div.rating span.num::text').get(),
+                'reviewerProfileUrl': review.css('div.thumb a::attr(href)').get(),
+                'reviewerImageUrl': review.css('div.thumb a img::attr(src)').get(),
+                'recommendationStatus': review.css('.tag.recommended::text').get().strip() if review.css('.tag.recommended::text').get() else None,
+            }
+            review_data.update(reactions)
+            reviews.append(review_data)
+
+        work_id_name = str(work_id).zfill(6)
+        work_reviews_file = self.temp_reviews_folder / f'{work_id_name}_reviews.json'
+        with open(work_reviews_file, 'w', encoding='utf-8') as f:
+            json.dump(reviews, f, indent=4, ensure_ascii=False)
+
+        next_page_exists = response.css('a.ga-click[data-ga-click-type="review-more-reviews"]::attr(href)').get()
+
+        if not next_page_exists:
+            logger.warning(f"[{work_id}][{work_name}] No next page")
+
+            try:
+                url = next(self.urls)
+                work_id = url.split('/')[4]
+                work_id_name = str(work_id).zfill(6)
+                work_reviews_file = self.temp_reviews_folder / f'{work_id_name}_reviews.json'
+
+                if not work_reviews_file.exists():
+                    logger.info(f'Go to next URL -> {url}')
+                    base_url = f'{url}/reviews?sort=newest&filter_check=&filter_hide=&preliminary=on&spoiler=on&p='
+                    yield scrapy.Request(url=base_url+'1', callback=self.parse, meta={'base_url': base_url, 'page_number': 2, 'work_url': url})
+                else:
+                    logger.debug(f'[{work_id_name}] - Reviews JSON file exists, skipping...')
+            except StopIteration:
+                logger.info("No more URLs to process")
+                return
+
+        logger.info(f"[{work_id}][{work_name}] Pushing {len(reviews)} reviews to the database")
+        self.anime_access.push_reviews_to_database(reviews)
+
+        base_url = response.meta['base_url']
+        page_number = response.meta['page_number']
+        next_page = f'{base_url}{page_number}'
+        logger.info(f"[{work_id}][{work_name}] Go to next page -> Page={page_number}")
+        yield scrapy.Request(next_page, self.parse, meta={'base_url': base_url, 'page_number': page_number+1, 'work_url': response.meta['work_url']})
