@@ -1,4 +1,6 @@
 *.csv
+*.html
+
 # Ignore Python virtual envs
 .env*
 venv/
