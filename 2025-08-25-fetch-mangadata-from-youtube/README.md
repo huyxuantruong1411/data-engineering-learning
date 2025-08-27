@@ -1,8 +1,3 @@
-Rõ rồi 👍
-Mình sẽ đặt toàn bộ nội dung **README.md** gói gọn trong một code block để bạn copy nguyên si về project.
-
----
-
 ````markdown
 # Fetch Manga Data from YouTube
 
