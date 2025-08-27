@@ -1,0 +1,791 @@
+=== Project Tree ===
+D:\Projects\Học DE\data-engineering-learning\2025-08-25-fetch-mangadata-from-youtube/
+├── dump.py
+├── run_pipeline.py
+└── src/
+    ├── comments.py
+    ├── db.py
+    ├── html_crawler.py
+    ├── pipeline.py
+    ├── transcript.py
+    ├── transcript_fetcher.py
+    ├── utils.py
+    ├── youtube.py
+    └── youtube_crawler.py
+
+
+=== Folder: D:\Projects\Học DE\data-engineering-learning\2025-08-25-fetch-mangadata-from-youtube ===
+
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-25-fetch-mangadata-from-youtube\dump.py ---
+import os
+
+OUTPUT_FILE = "project_dump.txt"
+
+def should_ignore_file(filename: str) -> bool:
+    """Bỏ qua file không cần thiết"""
+    if filename.startswith(".env"):  # Bỏ qua mọi file .env*
+        return True
+    if filename.endswith(".exe"):
+        return True
+    if filename == "__init__.py":
+        return True
+    return False
+
+def should_ignore_dir(dirname: str) -> bool:
+    """Bỏ qua thư mục không quan trọng"""
+    if dirname.startswith(".env"):  # Bỏ qua mọi folder .env*
+        return True
+    if dirname in ("__pycache__", ".venv", "build", "dist"):
+        return True
+    return False
+
+def build_tree(root_dir: str, prefix: str = "") -> str:
+    """Tạo cây thư mục giống lệnh `tree` (lọc theo quy tắc ignore)."""
+    entries = []
+    with os.scandir(root_dir) as it:
+        for entry in sorted(it, key=lambda e: e.name):
+            if entry.is_dir() and not should_ignore_dir(entry.name):
+                entries.append(entry)
+            elif entry.is_file():
+                if should_ignore_file(entry.name):
+                    continue
+                if entry.name.endswith(".py"):
+                    entries.append(entry)
+
+    lines = []
+    for i, entry in enumerate(entries):
+        connector = "└── " if i == len(entries) - 1 else "├── "
+        if entry.is_dir():
+            lines.append(prefix + connector + entry.name + "/")
+            extension = "    " if i == len(entries) - 1 else "│   "
+            lines.extend(build_tree(entry.path, prefix + extension).splitlines())
+        else:
+            lines.append(prefix + connector + entry.name)
+    return "\n".join(lines)
+
+def dump_project(root_dir: str, output_file: str):
+    with open(output_file, "w", encoding="utf-8") as out:
+        # In cấu trúc thư mục
+        out.write("=== Project Tree ===\n")
+        out.write(root_dir + "/\n")
+        out.write(build_tree(root_dir))
+        out.write("\n\n")
+
+        # In nội dung code
+        for dirpath, dirnames, filenames in os.walk(root_dir):
+            # Lọc thư mục
+            dirnames[:] = [d for d in dirnames if not should_ignore_dir(d)]
+
+            rel_path = os.path.relpath(dirpath, root_dir)
+            if rel_path == ".":
+                rel_path = ""
+            out.write(f"\n=== Folder: {rel_path or root_dir} ===\n")
+
+            for filename in filenames:
+                if should_ignore_file(filename):
+                    continue
+                if filename.endswith(".py"):
+                    file_path = os.path.join(dirpath, filename)
+                    out.write(f"\n--- File: {file_path} ---\n")
+                    try:
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            out.write(f.read())
+                    except Exception as e:
+                        out.write(f"[Lỗi đọc file: {e}]\n")
+
+if __name__ == "__main__":
+    current_dir = os.getcwd()
+    dump_project(current_dir, OUTPUT_FILE)
+    print(f"✅ Đã xuất toàn bộ code .py (đã lọc .env*, .exe, __pycache__, __init__.py...) + cây thư mục vào {OUTPUT_FILE}")
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-25-fetch-mangadata-from-youtube\run_pipeline.py ---
+import asyncio
+import argparse
+import logging
+import sys
+from pathlib import Path
+from src.pipeline import run_metadata_flow, run_transcript_flow, run_comments_flow
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+handler.addFilter(lambda record: "file_cache is only supported with oauth2client" not in record.getMessage())
+logger.handlers[:] = [handler]
+
+async def main():
+    parser = argparse.ArgumentParser(description="YouTube manga collector (metadata / transcripts / comments)")
+    parser.add_argument("--mode", choices=["meta", "transcripts", "comments"], required=True,
+                        help="meta: collect metadata; transcripts: collect transcripts; comments: collect comments")
+    parser.add_argument("--limit", type=int, help="Limit mangas (meta) OR videos (transcripts/comments), default: all")
+    parser.add_argument("--min-views", type=int, default=1000, help="Minimum viewCount for videos to keep (meta)")
+    parser.add_argument("--comments-limit", type=int, help="Max comments to embed per video (comments), default: all")
+    parser.add_argument("--max-queries-per-manga", type=int, default=3, help="At most N queries per manga, default: 3")
+    parser.add_argument("--concurrency", type=int, default=5, help="Concurrent tasks for async processing, default: 5")
+
+    args = parser.parse_args()
+
+    if args.mode == "meta":
+        logging.info("Running in META mode")
+        await run_metadata_flow(args)
+    elif args.mode == "transcripts":
+        logging.info("Running in TRANSCRIPTS mode")
+        await run_transcript_flow(
+            limit_videos=args.limit,
+            prefer_from_metadata=True,
+            concurrency=args.concurrency
+        )
+    else:
+        logging.info("Running in COMMENTS mode")
+        await run_comments_flow(
+            limit_videos=args.limit,
+            prefer_from_metadata=True,
+            concurrency=args.concurrency,
+            comments_limit=args.comments_limit
+        )
+
+if __name__ == "__main__":
+    asyncio.run(main())
+=== Folder: src ===
+
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-25-fetch-mangadata-from-youtube\src\comments.py ---
+import logging
+from typing import List, Dict, Any
+from src.youtube_crawler import crawl_videos_by_ids
+
+logger = logging.getLogger(__name__)
+
+async def get_comments(video_id: str, max_comments: int = 50) -> List[Dict[str, Any]]:
+    logger.debug(f"Fetching comments for video_id={video_id}")
+    details = await crawl_videos_by_ids([video_id], get_comments=True, comments_limit=max_comments)
+    video_data = details.get(video_id, {})
+    comments = video_data.get("comments", [])[:max_comments]
+    return [
+        {
+            "author": c.get("authorDisplayName", ""),
+            "text": c.get("text", ""),
+            "like_count": c.get("likeCount", 0),
+            "published_at": c.get("publishedAt", "")
+        }
+        for c in comments
+    ]
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-25-fetch-mangadata-from-youtube\src\db.py ---
+import logging
+from pymongo import AsyncMongoClient
+from pymongo.database import Database
+from pymongo.collection import Collection
+
+logger = logging.getLogger(__name__)
+
+async def get_collections(mode: str = "meta") -> tuple[Collection, Collection, Collection, Collection, Collection]:
+    try:
+        logger.info("Attempting to connect to MongoDB...")
+        client = AsyncMongoClient("mongodb://localhost:27017")
+        db = client["manga_raw_data"]
+        logger.info("Connected to MongoDB database: manga_raw_data")
+        
+        mangadex_manga = db["mangadex_manga"]
+        mangadex_comments = db["mangadex_comments"]
+        youtube_videos = db["youtube_videos"]
+        youtube_comments = db["youtube_comments"]
+        youtube_transcripts = db["youtube_transcripts"]
+        
+        count = await mangadex_manga.count_documents({})
+        logger.info(f"Found {count} documents in mangadex_manga collection")
+        
+        if mode == "meta":
+            return mangadex_manga, mangadex_comments, youtube_videos, youtube_comments, youtube_transcripts
+        else:
+            logger.error(f"Invalid mode: {mode}")
+            raise ValueError(f"Invalid mode: {mode}")
+    except Exception as e:
+        logger.error(f"Failed to connect to MongoDB or get collections: {str(e)}", exc_info=True)
+        raise
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-25-fetch-mangadata-from-youtube\src\html_crawler.py ---
+import asyncio
+import logging
+import random
+import re
+from typing import List, Optional
+import aiohttp
+from bs4 import BeautifulSoup
+from cachetools import TTLCache
+from src.youtube_crawler import crawl_video_with_ytdlp
+
+logger = logging.getLogger(__name__)
+
+# Cache HTML results
+cache = TTLCache(maxsize=10000, ttl=3600)
+
+async def _backoff_sleep(attempt: int, base: float = 1.0, cap: float = 60.0):
+    t = min(cap, base * (2 ** (attempt - 1)))
+    jitter = t * 0.2
+    wait = max(0.1, t + random.uniform(-jitter, jitter))
+    logger.debug(f"backoff: attempt={attempt}, sleeping {wait:.2f}s")
+    await asyncio.sleep(wait)
+
+async def _fetch_html(url: str, max_attempts: int = 15) -> Optional[str]:
+    cache_key = f"html:{url}"
+    if cache_key in cache:
+        logger.debug(f"Cache hit for HTML url={url}")
+        return cache[cache_key]
+    
+    attempt = 0
+    headers = {
+        "User-Agent": random.choice([
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0"
+        ])
+    }
+    async with aiohttp.ClientSession() as session:
+        while attempt < max_attempts:
+            attempt += 1
+            try:
+                async with session.get(url, headers=headers, timeout=60) as resp:
+                    if resp.status == 429 or resp.status >= 500:
+                        logger.warning(f"HTTP {resp.status} for {url}, attempt {attempt}/{max_attempts}")
+                        await _backoff_sleep(attempt)
+                        await asyncio.sleep(1)
+                        continue
+                    if resp.status != 200:
+                        logger.warning(f"HTTP {resp.status} for {url}, attempt {attempt}/{max_attempts}")
+                        await _backoff_sleep(attempt)
+                        await asyncio.sleep(1)
+                        continue
+                    text = await resp.text()
+                    cache[cache_key] = text
+                    return text
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                logger.warning(f"Fetch HTML error for {url}: {type(e).__name__}: {str(e)}, attempt {attempt}/{max_attempts}")
+                await _backoff_sleep(attempt)
+                await asyncio.sleep(1)
+                continue
+    logger.error(f"Failed to fetch HTML for {url} after {max_attempts} attempts")
+    return None
+
+async def search_videos_html(query: str) -> List[str]:
+    url = f"https://www.youtube.com/results?search_query={query.replace(' ', '+')}"
+    html = await _fetch_html(url)
+    if not html:
+        return []
+    
+    soup = BeautifulSoup(html, "html.parser")
+    video_ids = []
+    for script in soup.find_all("script"):
+        text = script.text
+        if "ytInitialData" in text:
+            matches = re.findall(r'"videoId":"([0-9A-Za-z_-]{11})"', text)
+            video_ids.extend(matches)
+    return list(dict.fromkeys(video_ids))[:50]
+
+async def fetch_video_metadata_html(video_id: str) -> Optional[dict]:
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    html = await _fetch_html(url)
+    if html:
+        soup = BeautifulSoup(html, "html.parser")
+        view_count = 0
+        for script in soup.find_all("script"):
+            if "viewCount" in script.text:
+                match = re.search(r'"viewCount":"(\d+)"', script.text)
+                if match:
+                    view_count = int(match.group(1))
+                    break
+        if view_count > 0:
+            return {"statistics": {"viewCount": view_count}}
+    
+    logger.info(f"Falling back to yt-dlp for video_id={video_id}")
+    ytdlp_data = await crawl_video_with_ytdlp(video_id, get_comments=False)
+    if ytdlp_data:
+        return {"statistics": {"viewCount": ytdlp_data.get("statistics", {}).get("viewCount", 0)}}
+    return None
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-25-fetch-mangadata-from-youtube\src\pipeline.py ---
+import asyncio
+import logging
+from datetime import datetime
+from cachetools import TTLCache
+from src.db import get_collections
+from src.youtube import search_videos
+from src.transcript import process_transcript
+from src.comments import get_comments
+from src.transcript_fetcher import get_transcript
+
+logger = logging.getLogger(__name__)
+
+# Cache để lưu kết quả, TTL=1h
+cache = TTLCache(maxsize=10000, ttl=3600)
+
+async def _extract_titles_from_manga(manga):
+    attrs = manga.get("attributes", {}) or {}
+    # Canonical title: ưu tiên en, sau vi, fallback root title or id
+    title = ""
+    title_obj = attrs.get("title") or {}
+    if isinstance(title_obj, dict):
+        en = title_obj.get("en")
+        vi = title_obj.get("vi")
+        if en and isinstance(en, str) and en.strip():
+            title = en.strip()
+        elif vi and isinstance(vi, str) and vi.strip():
+            title = vi.strip()
+    if not title:
+        root_title = manga.get("title")
+        if isinstance(root_title, str) and root_title.strip():
+            title = root_title.strip()
+    if not title:
+        title = manga.get("id", "unknown").strip()
+
+    # Alt titles: chỉ lấy en và vi
+    alt_titles = []
+    alt_titles_data = attrs.get("altTitles") or attrs.get("alt_titles") or manga.get("alt_titles") or manga.get("altTitles")
+    if isinstance(alt_titles_data, list):
+        for item in alt_titles_data:
+            if isinstance(item, dict):
+                for lang, v in item.items():
+                    if lang in ("en", "vi") and isinstance(v, str) and v.strip():
+                        alt_titles.append(v.strip())
+            elif isinstance(item, str) and item.strip():
+                alt_titles.append(item.strip())
+    # dedupe
+    seen = set()
+    deduped = []
+    for t in [title] + alt_titles:
+        if t and t not in seen:
+            seen.add(t)
+            deduped.append(t)
+    canonical = deduped[0] if deduped else title
+    alts = deduped[1:] if len(deduped) > 1 else []
+
+    return canonical, alts
+
+async def _assemble_doc(manga_id: str, query: str, video: dict) -> dict:
+    return {
+        "_id": video["id"],
+        "mangadex_id": manga_id,
+        "query": query,
+        "source": "youtube",
+        "source_url": f"https://www.youtube.com/watch?v={video['id']}",
+        "fetched_at": datetime.now().isoformat(),
+        "snippet": video.get("snippet", {}),
+        "statistics": video.get("statistics", {}),
+        "lang": video.get("lang", "en")
+    }
+
+async def run_metadata_flow(args):
+    logger.info("Running metadata flow...")
+    coll, _, ytvideos, _, _ = await get_collections(mode="meta")
+    try:
+        count = await coll.count_documents({})
+        logger.info(f"mangadex_manga documents count: {count}")
+        cursor = coll.find().limit(args.limit or count)
+    except Exception as e:
+        logger.error(f"Mongo error: {e}")
+        return
+
+    async def process_query(manga_id, query, min_views, ytvideos):
+        cache_key = f"search:{query}:{min_views}"
+        if cache_key in cache:
+            videos = cache[cache_key]
+            logger.debug(f"Cache hit for query={query}")
+        else:
+            videos = await search_videos(query, min_views=min_views)
+            cache[cache_key] = videos
+        for v in videos:
+            doc = await _assemble_doc(manga_id, query, v)
+            try:
+                await ytvideos.insert_one(doc)
+                logger.debug(f"Inserted video {v['id']} for query={query}")
+            except Exception as e:
+                logger.debug(f"Duplicate or error for video {v['id']}: {e}")
+
+    async def process_one(manga):
+        title, alt_titles = await _extract_titles_from_manga(manga)
+        logger.info(f"Collecting videos for manga: '{title}' (alts={len(alt_titles)})")
+        queries = [f"{title} manga"]
+        if args.max_queries_per_manga:
+            queries.extend(f"{alt} manga" for alt in alt_titles[:args.max_queries_per_manga - 1])
+        else:
+            queries.extend(f"{alt} manga" for alt in alt_titles)
+        
+        # Chạy tuần tự hoặc giới hạn concurrency, thêm sleep 1s giữa query
+        for q in queries:
+            await process_query(manga["id"], q, args.min_views, ytvideos)
+            await asyncio.sleep(1)  # Sleep 1s giữa query
+
+    # Giới hạn concurrency
+    tasks = [process_one(manga) async for manga in cursor]
+    processed = 0
+    for i in range(0, len(tasks), args.concurrency):
+        batch = tasks[i:i + args.concurrency]
+        await asyncio.gather(*batch)
+        processed += len(batch)
+        logger.info(f"Progress: {processed}/{args.limit or count} mangas processed")
+        await asyncio.sleep(1)  # Sleep 1s giữa batch
+
+    logger.info(f"Metadata flow finished. Processed {processed} mangas.")
+
+async def run_transcript_flow(limit_videos: int, prefer_from_metadata: bool, concurrency: int):
+    logger.info("Running transcript flow...")
+    _, _, youtube_videos, youtube_transcripts, _ = await get_collections(mode="transcripts")
+    seen_ids = set()
+    try:
+        cursor = youtube_videos.find().limit(limit_videos or youtube_videos.count_documents({}))
+    except Exception as e:
+        logger.error(f"Mongo error: {e}")
+        return
+
+    async def process_one(video):
+        video_id = video["_id"]
+        if video_id in seen_ids:
+            return
+        seen_ids.add(video_id)
+        try:
+            transcript, method = await get_transcript(video_id)
+            if transcript:
+                doc = {
+                    "_id": video_id,
+                    "transcript": transcript,
+                    "method": method,
+                    "fetched_at": datetime.utcnow(),
+                }
+                await youtube_transcripts.insert_one(doc)
+                logger.info(f"Collected transcript for video {video_id} using {method}")
+            else:
+                logger.info(f"No transcript available for video {video_id}")
+        except Exception as e:
+            logger.exception(f"Failed to fetch transcript for video {video_id}: {e}")
+
+    # Giới hạn concurrency
+    tasks = [process_one(video) async for video in cursor]
+    processed = 0
+    for i in range(0, len(tasks), concurrency):
+        batch = tasks[i:i + concurrency]
+        await asyncio.gather(*batch)
+        processed += len(batch)
+        logger.info(f"Progress: {processed}/{limit_videos or 'all'} videos processed")
+        await asyncio.sleep(1)  # Sleep 1s giữa batch
+
+async def run_comments_flow(limit_videos: int, prefer_from_metadata: bool, concurrency: int, comments_limit: int = None):
+    logger.info("Running comments flow...")
+    _, _, youtube_videos, _, youtube_comments = await get_collections(mode="comments")
+    seen_ids = set()
+    try:
+        cursor = youtube_videos.find().limit(limit_videos or youtube_videos.count_documents({}))
+    except Exception as e:
+        logger.error(f"Mongo error: {e}")
+        return
+
+    async def process_one(video):
+        video_id = video["_id"]
+        if video_id in seen_ids:
+            return
+        seen_ids.add(video_id)
+        logger.info(f"Fetching comments for video={video_id}")
+        comments = await get_comments(video_id, max_comments=comments_limit)
+        if comments:
+            doc = {
+                "_id": video_id,
+                "comments": comments,
+                "fetched_at": datetime.now().isoformat()
+            }
+            try:
+                await youtube_comments.insert_one(doc)
+                logger.debug(f"Inserted comments for video {video_id}")
+            except Exception as e:
+                logger.debug(f"Duplicate or error for comments {video_id}: {e}")
+
+    # Giới hạn concurrency
+    tasks = [process_one(video) async for video in cursor]
+    processed = 0
+    for i in range(0, len(tasks), concurrency):
+        batch = tasks[i:i + concurrency]
+        await asyncio.gather(*batch)
+        processed += len(batch)
+        logger.info(f"Progress: {processed}/{limit_videos or 'all'} videos processed")
+        await asyncio.sleep(1)  # Sleep 1s giữa batch
+
+    logger.info(f"Comments flow finished. Processed {processed} videos.")
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-25-fetch-mangadata-from-youtube\src\transcript.py ---
+import logging
+from datetime import datetime
+from src.youtube_crawler import try_get_subtitles_text
+
+logger = logging.getLogger(__name__)
+
+async def process_transcript(video: dict, yttranscripts):
+    video_id = video.get("_id")
+    logger.debug(f"Processing transcript for video_id={video_id}")
+    subs = await try_get_subtitles_text(video_id)
+    if subs:
+        doc = {
+            "_id": video_id,
+            "subtitles": subs,
+            "fetched_at": datetime.now().isoformat()
+        }
+        try:
+            await yttranscripts.insert_one(doc)
+            logger.debug(f"Inserted transcript for video {video_id}")
+        except Exception as e:
+            logger.debug(f"Duplicate or error for transcript {video_id}: {e}")
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-25-fetch-mangadata-from-youtube\src\transcript_fetcher.py ---
+import os
+import shutil
+import tempfile
+import subprocess
+import logging
+from typing import Optional, Tuple
+
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+import yt_dlp
+
+logger = logging.getLogger(__name__)
+
+def fetch_transcript_api_first(video_id: str) -> Optional[str]:
+    try:
+        data = YouTubeTranscriptApi.get_transcript(video_id, languages=["vi", "en"])
+        text = " ".join([x.get("text", "") for x in data if x.get("text")])
+        return text.strip() or None
+    except (TranscriptsDisabled, NoTranscriptFound) as e:
+        logger.info(f"No transcript via API for {video_id}: {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"Transcript API error for {video_id}: {e}")
+        return None
+
+def whisper_fallback(video_id: str, model: str = "small", lang_hint: str = "vi") -> Optional[str]:
+    """
+    Download bestaudio to temp dir and run whisper CLI. Cleanup after done.
+    """
+    tmpdir = tempfile.mkdtemp(prefix=f"yt_{video_id}_")
+    audio_path = os.path.join(tmpdir, f"{video_id}.mp3")
+    try:
+        ydl_opts = {
+            "format": "bestaudio/best",
+            "outtmpl": audio_path,
+            "quiet": True,
+            "nooverwrites": True,
+            "noprogress": True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
+        if not os.path.exists(audio_path):
+            logger.warning(f"Audio not downloaded for {video_id}")
+            return None
+
+        # Use whisper CLI (installed via git)
+        cmd = [
+            "whisper", audio_path,
+            "--model", model,
+            "--language", lang_hint,
+            "--fp16", "False",
+            "--task", "transcribe"
+        ]
+        logger.debug(f"Running whisper: {' '.join(cmd)}")
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            logger.warning(f"Whisper error for {video_id}: {res.stderr[:300]}")
+            return None
+
+        # Whisper typically writes a .txt next to audio. Read it then cleanup.
+        txt_file = audio_path.replace(".mp3", ".txt")
+        content = None
+        if os.path.exists(txt_file):
+            with open(txt_file, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read().strip()
+        return content
+    except Exception as e:
+        logger.warning(f"Whisper fallback exception for {video_id}: {e}")
+        return None
+    finally:
+        try:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+        except Exception:
+            pass
+
+def get_transcript(video_id: str) -> Tuple[Optional[str], str]:
+    """
+    Returns (transcript_text, method)
+    """
+    txt = fetch_transcript_api_first(video_id)
+    if txt:
+        return txt, "api"
+    # fallback, try vi first then en
+    for hint in ("vi", "en"):
+        txt = whisper_fallback(video_id, model="small", lang_hint=hint)
+        if txt:
+            return txt, "whisper"
+    return None, "none"
+
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-25-fetch-mangadata-from-youtube\src\utils.py ---
+import re
+import time
+import logging
+from typing import Optional, Dict, Any
+
+logger = logging.getLogger(__name__)
+
+VI_DIACRITICS = "ăâđêôơưáàảãạắằẳẵặấầẩẫậéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ"
+_vi_re = re.compile(f"[{VI_DIACRITICS}]", re.IGNORECASE)
+
+EN_COMMON = set("""
+the be to of and a in that have i it for not on with he as you do at this but his by from
+""".split())
+
+def looks_vietnamese(text: str) -> bool:
+    if not text:
+        return False
+    return bool(_vi_re.search(text))
+
+def looks_english(text: str) -> bool:
+    if not text:
+        return False
+    # Heuristic: contains spaces + at least 3 common english words
+    words = re.findall(r"[a-zA-Z']+", text.lower())
+    if not words:
+        return False
+    return sum(1 for w in words if w in EN_COMMON) >= 3
+
+def decide_lang_from_snippet(snippet: Dict[str, Any]) -> Optional[str]:
+    # Prefer explicit language hints
+    for key in ("defaultAudioLanguage", "defaultLanguage"):
+        lang = snippet.get(key)
+        if lang:
+            code = lang.split("-")[0].lower()
+            if code in ("en", "vi"):
+                return code
+    # Fallback by title/description heuristic
+    title = snippet.get("title", "")
+    desc = snippet.get("description", "")
+    text = f"{title}\n{desc}"
+    if looks_vietnamese(text):
+        return "vi"
+    if looks_english(text):
+        return "en"
+    return None
+
+def backoff_sleep(attempt: int, base: float = 1.0, cap: float = 60.0):
+    t = min(cap, base * (2 ** (attempt - 1)))
+    jitter = 0.2 * t
+    sleep_for = t + (jitter * (0.5 - time.time() % 1))
+    logger.debug(f"Backoff attempt={attempt} sleeping ~{sleep_for:.2f}s")
+    time.sleep(max(0.5, sleep_for))
+
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-25-fetch-mangadata-from-youtube\src\youtube.py ---
+import asyncio
+import logging
+from typing import List, Dict, Any
+from src.html_crawler import search_videos_html
+from src.youtube_crawler import search_with_ytdlp, crawl_video_with_ytdlp
+
+logger = logging.getLogger(__name__)
+
+async def search_videos(query: str, min_views: int = 0) -> List[Dict[str, Any]]:
+    """
+    Tìm kiếm video trên YouTube cho query và lọc theo min_views.
+    Dùng HTML crawler trước, fallback sang yt-dlp nếu thất bại.
+    """
+    try:
+        # Thử HTML crawler trước
+        video_ids = await search_videos_html(query)
+        if not video_ids:
+            logger.warning(f"No videos found via HTML for query={query}, falling back to yt-dlp")
+            # Fallback sang yt-dlp
+            results = await search_with_ytdlp(query)
+            video_ids = [r["id"]["videoId"] for r in results if r.get("id", {}).get("videoId")]
+            if not video_ids:
+                logger.warning(f"No videos found via yt-dlp for query={query}")
+                return []
+
+        videos = []
+        for vid in video_ids:
+            # Lấy metadata video
+            video_data = await crawl_video_with_ytdlp(vid, get_comments=False)
+            if video_data and video_data.get("statistics", {}).get("viewCount", 0) >= min_views:
+                videos.append(video_data)
+            await asyncio.sleep(1)  # Sleep 1s giữa video để giảm tải
+        logger.debug(f"Filtered {len(videos)} videos for query={query} with min_views={min_views}")
+        return videos
+    except Exception as e:
+        logger.error(f"Search videos failed for query={query}: {str(e)}", exc_info=True)
+        return []
+--- File: D:\Projects\Học DE\data-engineering-learning\2025-08-25-fetch-mangadata-from-youtube\src\youtube_crawler.py ---
+import asyncio
+import logging
+import random
+from typing import Dict, Any, Optional, List
+import yt_dlp
+
+logger = logging.getLogger(__name__)
+
+# Semaphore để giới hạn concurrency
+semaphore = asyncio.Semaphore(10)
+
+async def _backoff_sleep(attempt: int, base: float = 0.5, cap: float = 30.0):
+    t = min(cap, base * (2 ** (attempt - 1)))
+    jitter = t * 0.2
+    wait = max(0.1, t + random.uniform(-jitter, jitter))
+    logger.debug(f"backoff: attempt={attempt}, sleeping {wait:.2f}s")
+    await asyncio.sleep(wait)
+
+def _normalize_ydl_info(info: Dict[str, Any], get_comments: bool = False) -> Dict[str, Any]:
+    out = {
+        "id": info.get("id"),
+        "statistics": {
+            "viewCount": int(info.get("view_count", 0)),
+        }
+    }
+    return out
+
+async def _ydl_extract_info_with_retries(url: str, max_attempts: int, skip_download: bool = True, get_comments: bool = False) -> Optional[Dict[str, Any]]:
+    async with semaphore:
+        attempt = 0
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': True,
+            'skip_download': skip_download,
+            'getcomments': get_comments,
+        }
+        while attempt < max_attempts:
+            attempt += 1
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    logger.debug(f"Extracted info for {url}, attempt {attempt}")
+                    return info
+            except Exception as e:
+                logger.warning(f"yt-dlp extract_info error (attempt {attempt}/{max_attempts}) for {url}: {str(e)}")
+                if attempt >= max_attempts:
+                    logger.error(f"yt-dlp failed for {url} after {max_attempts} attempts")
+                    return None
+                await _backoff_sleep(attempt)
+                continue
+    return None
+
+async def search_with_ytdlp(query: str) -> List[Dict[str, Any]]:
+    url = f"ytsearch50:{query}"
+    logger.debug(f"Searching with yt-dlp for query: {query}")
+    info = await _ydl_extract_info_with_retries(url, max_attempts=8, skip_download=True, get_comments=False)
+    results = []
+    if info:
+        entries = info.get("entries", [])
+        for e in entries:
+            if not e.get("id"):
+                continue
+            results.append({
+                "id": {"kind": "youtube#video", "videoId": e["id"]},
+                "statistics": {
+                    "viewCount": int(e.get("view_count", 0)),
+                }
+            })
+    logger.debug(f"Found {len(results)} videos for query={query}")
+    return results
+
+async def crawl_video_with_ytdlp(video_id: str, get_comments: bool = False, comments_limit: int = 200, max_attempts: int = 8) -> Optional[Dict[str, Any]]:
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    logger.debug(f"Fetching yt-dlp data for video_id={video_id}")
+    info = await _ydl_extract_info_with_retries(url, max_attempts=max_attempts, skip_download=True, get_comments=get_comments)
+    if not info:
+        return None
+    normalized = _normalize_ydl_info(info, get_comments=get_comments)
+    if normalized.get("comments") and comments_limit:
+        normalized["comments"] = normalized["comments"][:comments_limit]
+    return normalized
